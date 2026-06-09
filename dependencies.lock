@@ -34,6 +34,6 @@ direct_dependencies:
 - espressif/led_strip
 - joltwallet/littlefs
 - lvgl/lvgl
-manifest_hash: 2e79f2bfb2d486e945183aac510fe46642261aea3f3c6c7cc08df9bfc2ebdbc3
+manifest_hash: 98972417c4e02e45ba88ec7cf41fa3881dc30427847bb617a029b9387a2ae067
 target: esp32s3
 version: 3.0.0

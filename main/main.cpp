@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 
 #include "led_strip.h"
+#include "esp_task_wdt.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -17,14 +18,14 @@ namespace {
             .strip_gpio_num         = 48,
             .max_leds               = 1,
             .led_model              = LED_MODEL_WS2812,
-            .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_RGB,
+            .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
             .flags                  = {.invert_out = 0},
         };
         constexpr led_strip_rmt_config_t rmt_config = {
             .clk_src           = RMT_CLK_SRC_DEFAULT,
             .resolution_hz     = 1'000'000,
             .mem_block_symbols = 128,
-            .flags             = {.with_dma = 1},
+            .flags             = {.with_dma = 0},
         };
 
         ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &strip));
