@@ -1,0 +1,15 @@
+build/
+sdkconfig
+sdkconfig.old
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+.vscode/settings.json
+.cache/
+.clangd
+CMakeFiles/
+CMakeCache.txt
