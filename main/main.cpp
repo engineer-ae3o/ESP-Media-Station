@@ -1,63 +1,69 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "led_strip.h"
-
+#include "driver/spi_master.h"
 #include "esp_log.h"
 #include "esp_err.h"
 
+#include "ili9341.hpp"
+#include "config.hpp"
+
 namespace {
 
-    constexpr auto LED_PIN = GPIO_NUM_48;
-    constexpr auto TAG     = "MAIN";
+    void disp_task(void* arg) {
+        (void)arg;
 
-    led_strip_handle_t configure_led() {
+        constexpr spi_bus_config_t bus_config = {
+            .mosi_io_num           = config::LCD_MOSI_PIN,
+            .miso_io_num           = GPIO_NUM_NC,
+            .sclk_io_num           = config::LCD_CLK_PIN,
+            .quadwp_io_num         = GPIO_NUM_NC,
+            .quadhd_io_num         = GPIO_NUM_NC,
+            .data4_io_num          = GPIO_NUM_NC,
+            .data5_io_num          = GPIO_NUM_NC,
+            .data6_io_num          = GPIO_NUM_NC,
+            .data7_io_num          = GPIO_NUM_NC,
+            .data_io_default_level = false,
+            .max_transfer_sz       = (disp::MAX_WIDTH * disp::MAX_HEIGHT * 2),
+            .flags                 = SPICOMMON_BUSFLAG_IOMUX_PINS,
+            .isr_cpu_id            = ESP_INTR_CPU_AFFINITY_AUTO,
+            .intr_flags            = 0,
+        };
+        ESP_ERROR_CHECK(spi_bus_initialize(config::LCD_SPI_BUS, &bus_config, SPI_DMA_CH_AUTO));
 
-        constexpr led_strip_config_t strip_config = {
-            .strip_gpio_num         = LED_PIN,
-            .max_leds               = 1,
-            .led_model              = LED_MODEL_WS2812,
-            .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
-            .flags                  = {.invert_out = 0},
+        constexpr disp::config_t config = {
+            .spi_host           = config::LCD_SPI_BUS,
+            .spi_clock_speed_hz = config::LCD_SPI_CLK_SPEED_HZ,
+            .cs                 = config::LCD_CS_PIN,
+            .dc                 = config::LCD_DC_PIN,
+            .rst                = config::LCD_RST_PIN,
+            .width              = disp::MAX_WIDTH,
+            .height             = disp::MAX_HEIGHT,
+            .rotation           = 0,
         };
 
-        constexpr led_strip_rmt_config_t rmt_config = {
-            .clk_src           = RMT_CLK_SRC_DEFAULT,
-            .resolution_hz     = 10'000'000,
-            .mem_block_symbols = 128,
-            .flags             = {.with_dma = 1},
-        };
+        disp::ili9341_t display;
+        ESP_ERROR_CHECK(display.init(config));
 
-        // LED Strip object handle
-        led_strip_handle_t led_strip{};
-        ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
+        uint16_t color{0xF100};
 
-        ESP_LOGI(TAG, "Created LED strip object with SPI backend");
-        return led_strip;
+        while (true) {
+            ESP_ERROR_CHECK(display.set_screen(color));
+            ESP_LOGI("MAIN", "Color: 0x%X", color);
+
+            color += 100;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
     }
 
 } // namespace
 
 extern "C" {
     void app_main() {
-        led_strip_handle_t led_strip = configure_led();
-        ESP_LOGI(TAG, "Start blinking LED strip");
-
-        while (true) {
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 255, 0, 0));
-            ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-            ESP_LOGI(TAG, "RED");
-            vTaskDelay(pdMS_TO_TICKS(1'000));
-
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 0, 255, 0));
-            ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-            ESP_LOGI(TAG, "GREEN");
-            vTaskDelay(pdMS_TO_TICKS(1'000));
-
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, 0, 0, 0, 255));
-            ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-            ESP_LOGI(TAG, "BLUE");
-            vTaskDelay(pdMS_TO_TICKS(1'000));
+        auto ret = xTaskCreate(disp_task, "Display Task", 4096, {}, 4, {});
+        if (ret != pdPASS) {
+            ESP_LOGE("MAIN", "Failed to create Display Task");
+            assert(0);
         }
     }
 }
