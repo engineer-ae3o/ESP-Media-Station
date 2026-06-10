@@ -10,14 +10,15 @@
 #include <span>
 #include <cstdint>
 
-namespace ili9341 {
+namespace disp {
 
-    constexpr auto MAX_WIDTH{240UZ};
-    constexpr auto MAX_HEIGHT{320UZ};
+    constexpr auto MAX_WIDTH{240U};
+    constexpr auto MAX_HEIGHT{320U};
 
-    constexpr auto TIMEOUT_MS{50UZ};
+    constexpr auto TIMEOUT_MS{50U};
+    constexpr auto TRANS_QUEUE_SIZE{5U};
 
-    constexpr auto TAG{"ILI9341"};
+    constexpr auto* TAG{"ILI9341"};
 
     struct config_t {
         // SPI configuration
@@ -25,8 +26,6 @@ namespace ili9341 {
         uint32_t          spi_clock_speed_hz{};
 
         // GPIO pins
-        gpio_num_t mosi{GPIO_NUM_NC};
-        gpio_num_t sclk{GPIO_NUM_NC};
         gpio_num_t cs{GPIO_NUM_NC};
         gpio_num_t dc{GPIO_NUM_NC};
         gpio_num_t rst{GPIO_NUM_NC};
@@ -54,14 +53,14 @@ namespace ili9341 {
          * 
          * @return ESP_OK on success, error code otherwise.
          */
-        esp_err_t init(const config_t& config);
+        [[nodiscard]] esp_err_t init(const config_t& config);
 
         /**
          * @brief Deinitialize ili9341 driver and free resources.
          *
          * @return ESP_OK on success, error code otherwise.
          */
-        esp_err_t deinit();
+        [[nodiscard]] esp_err_t deinit();
 
         /**
          * @brief Flush the given pixels to the display controller.
@@ -78,7 +77,7 @@ namespace ili9341 {
          *       by the DMA controller to prevent copying of the data before the actual pixel
          *       transmission takes place. Do so by marking the buffer with `DMA_ATTR`.
          */
-        esp_err_t flush(size_t x1, size_t y1, size_t x2, size_t y2, std::span<const uint16_t> data);
+        [[nodiscard]] esp_err_t flush(size_t x1, size_t y1, size_t x2, size_t y2, std::span<const uint16_t> data);
 
         /**
          * @brief Sets the screen to given RGB16 color.
@@ -89,7 +88,7 @@ namespace ili9341 {
          * 
          * @return ESP_OK if data transmitted successfully, error code otherwise.
          */
-        esp_err_t set_screen(uint16_t color, bool little_endian = true);
+        [[nodiscard]] esp_err_t set_screen(uint16_t color, bool little_endian = true);
 
     private:
         bool                m_is_initialized{};
@@ -102,8 +101,8 @@ namespace ili9341 {
         void                  cleanup_resources();
         esp_err_t             send_cmd(uint8_t cmd);
         esp_err_t             send_data(std::span<const uint8_t> data);
+        static void IRAM_ATTR spi_trans_done_cb(spi_transaction_t* trans);
         esp_err_t             set_window(size_t x1, size_t y1, size_t x2, size_t y2);
-        static void IRAM_ATTR spi_post_transfer_callback(spi_transaction_t* trans);
     };
 
-} // namespace ili9341
+} // namespace disp

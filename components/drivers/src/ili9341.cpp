@@ -1,4 +1,5 @@
 #include "ili9341.hpp"
+#include "utils.hpp"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -6,15 +7,7 @@
 #include <array>
 #include <utility>
 
-namespace ili9341 {
-
-#define TRY(func)                                                                                                                          \
-    do {                                                                                                                                   \
-        if (auto ret_ = (func); ret_ != ESP_OK) {                                                                                          \
-            ESP_LOGE(TAG, "Function failed: %s", esp_err_to_name(ret_));                                                                   \
-            return ret_;                                                                                                                   \
-        }                                                                                                                                  \
-    } while (0)
+namespace disp {
 
     ili9341_t::~ili9341_t() noexcept {
         if (m_is_initialized) {
@@ -46,13 +39,22 @@ namespace ili9341 {
 
         // Configure SPI device
         const spi_device_interface_config_t dev_cfg = {
-            .mode           = 0, // The ILI9341 accepts a CPOL-CPHA of 0-0
-            .clock_source   = SPI_CLK_SRC_DEFAULT,
-            .clock_speed_hz = static_cast<int>(m_config.spi_clock_speed_hz),
-            .spics_io_num   = m_config.cs,
-            .flags          = 0,
-            .queue_size     = 10,
-            .post_cb        = spi_post_transfer_callback,
+            .command_bits     = 0,
+            .address_bits     = 0,
+            .dummy_bits       = 0,
+            .mode             = 0, // The ILI9341 accepts a CPOL-CPHA of 0-0
+            .clock_source     = SPI_CLK_SRC_DEFAULT,
+            .duty_cycle_pos   = 128, // Default param
+            .cs_ena_pretrans  = 0,
+            .cs_ena_posttrans = 0,
+            .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
+            .input_delay_ns   = 0,
+            .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
+            .spics_io_num     = m_config.cs,
+            .flags            = 0,
+            .queue_size       = TRANS_QUEUE_SIZE,
+            .pre_cb           = {},
+            .post_cb          = spi_trans_done_cb,
         };
 
         ret = spi_bus_add_device(m_config.spi_host, &dev_cfg, &m_handle);
@@ -62,9 +64,9 @@ namespace ili9341 {
             return ret;
         }
 
-        // Create FreeRTOS primitives
+        // Create mutex
         m_disp_mutex = xSemaphoreCreateMutex();
-        if (m_disp_mutex) {
+        if (!m_disp_mutex) {
             ESP_LOGE(TAG, "Failed to create the display mutex");
             cleanup_resources();
             return ESP_FAIL;
@@ -156,42 +158,18 @@ namespace ili9341 {
     }
 
     // Helpers
-    esp_err_t ili9341_t::send_cmd(uint8_t cmd) {
-
-        gpio_set_level(m_config.dc, 0); // Command mode
-
-        spi_transaction_t trans = {
-            .flags     = 0,
-            .length    = 8, // 8 bits
-            .user      = {},
-            .tx_buffer = &cmd,
-        };
-
-        // Polling for a single byte send is alright here
-        return spi_device_polling_transmit(m_handle, &trans);
-    }
-
-    esp_err_t ili9341_t::send_data(std::span<const uint8_t> data) {
-
-        gpio_set_level(m_config.dc, 1); // Data mode
-
-        spi_transaction_t trans = {
-            .flags     = 0,
-            .length    = data.size() * 8, // Data length in bits
-            .user      = xTaskGetCurrentTaskHandle(),
-            .tx_buffer = data.data(),
-        };
-
-        // Queue transaction
-        TRY(spi_device_queue_trans(m_handle, &trans, pdMS_TO_TICKS(TIMEOUT_MS)));
-
-        // Wait for DMA completion
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(TIMEOUT_MS)) == 0) {
-            ESP_LOGE(TAG, "Failed to send data bytes");
-            return ESP_ERR_TIMEOUT;
+    void ili9341_t::cleanup_resources() {
+        if (m_disp_mutex) {
+            vSemaphoreDelete(m_disp_mutex);
+            m_disp_mutex = {};
         }
-
-        return ESP_OK;
+        if (m_handle) {
+            spi_bus_remove_device(m_handle);
+            m_handle = {};
+        }
+        gpio_reset_pin(m_config.dc);
+        gpio_reset_pin(m_config.rst);
+        m_config = {};
     }
 
     esp_err_t ili9341_t::init_sequence() {
@@ -310,7 +288,27 @@ namespace ili9341 {
         return ESP_OK;
     }
 
-    void ili9341_t::spi_post_transfer_callback(spi_transaction_t* trans) {
+    esp_err_t ili9341_t::send_cmd(uint8_t cmd) {
+
+        gpio_set_level(m_config.dc, 0); // Command mode
+
+        spi_transaction_t trans = {
+            .flags            = 0,
+            .cmd              = 0,
+            .addr             = 0,
+            .length           = 8, // 8 bits
+            .rxlength         = 0, // We are only transmitting
+            .override_freq_hz = 0,
+            .user             = {},
+            .tx_buffer        = &cmd,
+            .rx_buffer        = {},
+        };
+
+        // Polling for a single byte send is alright here
+        return spi_device_polling_transmit(m_handle, &trans);
+    }
+
+    void ili9341_t::spi_trans_done_cb(spi_transaction_t* trans) {
         // Signal completion from ISR
         auto  higher_priority_task_woken{pdFALSE};
         auto* task_handle = static_cast<TaskHandle_t>(trans->user);
@@ -322,18 +320,33 @@ namespace ili9341 {
         }
     }
 
-    void ili9341_t::cleanup_resources() {
-        if (m_disp_mutex) {
-            vSemaphoreDelete(m_disp_mutex);
-            m_disp_mutex = {};
+    esp_err_t ili9341_t::send_data(std::span<const uint8_t> data) {
+
+        gpio_set_level(m_config.dc, 1); // Data mode
+
+        spi_transaction_t trans = {
+            .flags            = SPI_TRANS_DMA_USE_PSRAM,
+            .cmd              = 0,
+            .addr             = 0,
+            .length           = data.size() * 8, // Data length in bits
+            .rxlength         = 0,               // We are only transmitting
+            .override_freq_hz = 0,
+            .user             = xTaskGetCurrentTaskHandle(), // Pass the task handle of the calling
+                                                             // task to be notified by the ISR
+            .tx_buffer = data.data(),
+            .rx_buffer = {},
+        };
+
+        // Queue transaction
+        TRY(spi_device_queue_trans(m_handle, &trans, pdMS_TO_TICKS(TIMEOUT_MS)));
+
+        // Wait for DMA completion
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(TIMEOUT_MS)) == 0) {
+            ESP_LOGE(TAG, "Failed to send data bytes");
+            return ESP_ERR_TIMEOUT;
         }
-        if (m_handle) {
-            spi_bus_remove_device(m_handle);
-            m_handle = {};
-        }
-        gpio_reset_pin(m_config.dc);
-        gpio_reset_pin(m_config.rst);
-        m_config = {};
+
+        return ESP_OK;
     }
 
     esp_err_t ili9341_t::set_window(size_t x1, size_t y1, size_t x2, size_t y2) {
@@ -362,4 +375,4 @@ namespace ili9341 {
         return ESP_OK;
     }
 
-} // namespace ili9341
+} // namespace disp
