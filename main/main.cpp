@@ -45,13 +45,13 @@ namespace {
         disp::ili9341_t display;
         ESP_ERROR_CHECK(display.init(config));
 
-        uint16_t color{};
+        uint16_t color{0xF100};
 
         while (true) {
             ESP_ERROR_CHECK(display.set_screen(color));
             ESP_LOGI("MAIN", "Color: 0x%X", color);
 
-            color += 10;
+            color += 100;
             vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
@@ -60,7 +60,7 @@ namespace {
 
 extern "C" {
     void app_main() {
-        auto ret = xTaskCreate(disp_task, "Display Task", 2048, {}, 4, {});
+        auto ret = xTaskCreate(disp_task, "Display Task", 4096, {}, 4, {});
         if (ret != pdPASS) {
             ESP_LOGE("MAIN", "Failed to create Display Task");
             assert(0);

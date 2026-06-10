@@ -1,11 +1,11 @@
 #include "ili9341.hpp"
 #include "utils.hpp"
 
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 
 #include <array>
 #include <utility>
+#include <algorithm>
 
 namespace disp {
 
@@ -135,24 +135,43 @@ namespace disp {
             return ESP_ERR_INVALID_STATE;
         }
 
+        // Calculate buffer size to use to fill the display
+        constexpr uint32_t total_mem_needed_bytes{MAX_WIDTH * MAX_HEIGHT * 2};
+        constexpr uint32_t mem_allocated_bytes{total_mem_needed_bytes / 80};
+        constexpr uint32_t mem_for_16_bit_data{mem_allocated_bytes / 2};
+        constexpr uint32_t num_of_times_to_send{total_mem_needed_bytes / mem_allocated_bytes};
+
         // Allocate a buffer to store the data for the color
-        auto* buf =
-            static_cast<uint16_t*>(heap_caps_malloc(MAX_WIDTH * MAX_HEIGHT * 2, (MALLOC_CAP_DMA | MALLOC_CAP_32BIT | MALLOC_CAP_SPIRAM)));
-        if (buf == nullptr) {
-            return ESP_ERR_NO_MEM;
-        }
+        std::array<uint16_t, mem_for_16_bit_data> buf{};
 
         // Swap the byte order if the data in `color` is little endian
         if (little_endian) {
             color = __builtin_bswap16(color);
         }
 
-        for (size_t i{}; i < MAX_WIDTH * MAX_HEIGHT; i++) {
-            buf[i] = color;
-        }
+        // Fill the buffer with the color
+        buf.fill(color);
 
-        auto ret = flush(0, 0, MAX_WIDTH - 1, MAX_HEIGHT - 1, {buf, MAX_WIDTH * MAX_HEIGHT});
-        heap_caps_free(buf);
+        // Get offsets
+        constexpr size_t offset{MAX_HEIGHT / num_of_times_to_send};
+        size_t           y1{};
+        size_t           y2{offset};
+        esp_err_t        ret{ESP_OK};
+
+        for (size_t i{}; i < num_of_times_to_send; i++) {
+            ret = flush(0, y1, MAX_WIDTH - 1, y2, buf);
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to transmit color buffer on %d iteration: %s", i, esp_err_to_name(ret));
+                break;
+            }
+            // Get new height offsets
+            y1 = y2;
+            y2 += offset;
+            // Make sure y2 doesn't go above the valid range
+            if (y2 == MAX_HEIGHT) {
+                y2 = MAX_HEIGHT - 1;
+            }
+        }
 
         return ret;
     }
