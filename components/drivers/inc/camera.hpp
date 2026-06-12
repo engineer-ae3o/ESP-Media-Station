@@ -1,5 +1,10 @@
 #pragma once
 
-namespace cam {
-    class camera_t {};
-} // namespace cam
+#include <concepts>
+
+namespace camera {
+
+    template<typename T>
+    concept camera = ;
+
+}

@@ -45,7 +45,7 @@ namespace {
         disp::ili9341_t display;
         ESP_ERROR_CHECK(display.init(config));
 
-        uint16_t color{0xF100};
+        uint16_t color{0xF100}; // Start at RED
 
         while (true) {
             ESP_ERROR_CHECK(display.set_screen(color));

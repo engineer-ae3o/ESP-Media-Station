@@ -1,8 +1,5 @@
 #pragma once
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_err.h"
@@ -72,10 +69,11 @@ namespace disp {
          * @return ESP_OK if data transmitted successfully, error code otherwise.
          * 
          * @note The ILI9341 expects the data as big endian, so when rendering, make
-         *       sure the pixels are rendered as big endian before calling `flush(...)`
-         *       as the driver sends the data verbatim. Also, ensure the data can be accessed
-         *       by the DMA controller to prevent copying of the data before the actual pixel
-         *       transmission takes place. Do so by marking the buffer with `DMA_ATTR`.
+         *       sure the pixels are rendered as big endian before calling flush(...)
+         *       as the driver sends the data verbatim. Also, ensure the data can be
+         *       accessed by the DMA controller to prevent copying of the data before
+         *       the actual pixel transmission takes place. Do so by marking the buffer
+         *       with `DMA_ATTR` if statically allocated.
          */
         [[nodiscard]] esp_err_t flush(size_t x1, size_t y1, size_t x2, size_t y2, std::span<const uint16_t> data);
 
@@ -92,17 +90,15 @@ namespace disp {
 
     private:
         bool                m_is_initialized{};
-        spi_device_handle_t m_handle{};
         config_t            m_config{};
-        SemaphoreHandle_t   m_disp_mutex{};
+        spi_device_handle_t m_device_handle{};
 
         // Helpers
-        esp_err_t             init_sequence();
-        void                  cleanup_resources();
-        esp_err_t             send_cmd(uint8_t cmd);
-        esp_err_t             send_data(std::span<const uint8_t> data);
-        static void IRAM_ATTR spi_trans_done_cb(spi_transaction_t* trans);
-        esp_err_t             set_window(size_t x1, size_t y1, size_t x2, size_t y2);
+        esp_err_t init_sequence();
+        void      cleanup_resources();
+        esp_err_t send_cmd(uint8_t cmd);
+        esp_err_t send_data(std::span<const uint8_t> data);
+        esp_err_t set_window(size_t x1, size_t y1, size_t x2, size_t y2);
     };
 
 } // namespace disp

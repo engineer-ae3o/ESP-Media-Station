@@ -1,11 +1,14 @@
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include "ili9341.hpp"
 #include "utils.hpp"
 
+#include "esp_attr.h"
 #include "esp_log.h"
 
 #include <array>
 #include <utility>
-#include <algorithm>
 
 namespace disp {
 
@@ -53,27 +56,19 @@ namespace disp {
             .spics_io_num     = m_config.cs,
             .flags            = 0,
             .queue_size       = TRANS_QUEUE_SIZE,
-            .pre_cb           = {},
-            .post_cb          = spi_trans_done_cb,
+            .pre_cb           = nullptr,
+            .post_cb          = nullptr,
         };
 
-        ret = spi_bus_add_device(m_config.spi_host, &dev_cfg, &m_handle);
+        ret = spi_bus_add_device(m_config.spi_host, &dev_cfg, &m_device_handle);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "SPI device configure failed: %s", esp_err_to_name(ret));
             cleanup_resources();
             return ret;
         }
 
-        // Create mutex
-        m_disp_mutex = xSemaphoreCreateMutex();
-        if (!m_disp_mutex) {
-            ESP_LOGE(TAG, "Failed to create the display mutex");
-            cleanup_resources();
-            return ESP_FAIL;
-        }
-
         // Hardware reset
-        // Toggle the rst pin
+        // Toggle the reset pin
         gpio_set_level(m_config.rst, 0);
         vTaskDelay(pdMS_TO_TICKS(10));
         gpio_set_level(m_config.rst, 1);
@@ -82,7 +77,7 @@ namespace disp {
         // Send initialization sequence to ili9341
         ret = init_sequence();
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Init sequence failed: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to transmit initialization sequence: %s", esp_err_to_name(ret));
             cleanup_resources();
             return ret;
         }
@@ -123,7 +118,7 @@ namespace disp {
         // Send the memory write command
         TRY(send_cmd(0x2CU));
 
-        // Send the pixel data. The `send_data(...)` function expects uint8_t, so the
+        // Send the pixel data. The send_data(...) function expects uint8_t, so the
         // byte count has to be multiplied by two since the data here is uint16_t
         TRY(send_data({reinterpret_cast<const uint8_t*>(data.data()), (data.size() * 2)}));
 
@@ -136,16 +131,16 @@ namespace disp {
         }
 
         // Calculate buffer size to use to fill the display
-        constexpr uint32_t total_mem_needed_bytes{MAX_WIDTH * MAX_HEIGHT * 2};
-        constexpr uint32_t mem_allocated_bytes{total_mem_needed_bytes / 80};
-        constexpr uint32_t mem_for_16_bit_data{mem_allocated_bytes / 2};
-        constexpr uint32_t num_of_times_to_send{total_mem_needed_bytes / mem_allocated_bytes};
+        constexpr size_t total_mem_needed_bytes{MAX_WIDTH * MAX_HEIGHT * 2};
+        constexpr size_t num_of_times_to_send_color_buf{80};
+        constexpr size_t mem_allocated_bytes{total_mem_needed_bytes / num_of_times_to_send_color_buf};
+        constexpr size_t mem_for_16_bit_data{mem_allocated_bytes / 2};
 
         // Allocate a buffer to store the data for the color
-        std::array<uint16_t, mem_for_16_bit_data> buf{};
+        WORD_ALIGNED_ATTR std::array<uint16_t, mem_for_16_bit_data> buf{};
 
         // Swap the byte order if the data in `color` is little endian
-        if (little_endian) {
+        if (little_endian) [[likely]] {
             color = __builtin_bswap16(color);
         }
 
@@ -153,12 +148,12 @@ namespace disp {
         buf.fill(color);
 
         // Get offsets
-        constexpr size_t offset{MAX_HEIGHT / num_of_times_to_send};
-        size_t           y1{};
-        size_t           y2{offset};
-        esp_err_t        ret{ESP_OK};
+        constexpr auto offset{MAX_HEIGHT / num_of_times_to_send_color_buf};
+        size_t         y1{};
+        size_t         y2{offset - 1};
+        esp_err_t      ret{ESP_OK};
 
-        for (size_t i{}; i < num_of_times_to_send; i++) {
+        for (size_t i{}; i < num_of_times_to_send_color_buf; i++) {
             ret = flush(0, y1, MAX_WIDTH - 1, y2, buf);
             if (ret != ESP_OK) {
                 ESP_LOGW(TAG, "Failed to transmit color buffer on %d iteration: %s", i, esp_err_to_name(ret));
@@ -167,10 +162,6 @@ namespace disp {
             // Get new height offsets
             y1 = y2;
             y2 += offset;
-            // Make sure y2 doesn't go above the valid range
-            if (y2 == MAX_HEIGHT) {
-                y2 = MAX_HEIGHT - 1;
-            }
         }
 
         return ret;
@@ -178,13 +169,9 @@ namespace disp {
 
     // Helpers
     void ili9341_t::cleanup_resources() {
-        if (m_disp_mutex) {
-            vSemaphoreDelete(m_disp_mutex);
-            m_disp_mutex = {};
-        }
-        if (m_handle) {
-            spi_bus_remove_device(m_handle);
-            m_handle = {};
+        if (m_device_handle) {
+            spi_bus_remove_device(m_device_handle);
+            m_device_handle = nullptr;
         }
         gpio_reset_pin(m_config.dc);
         gpio_reset_pin(m_config.rst);
@@ -192,7 +179,6 @@ namespace disp {
     }
 
     esp_err_t ili9341_t::init_sequence() {
-
         // Commands and data bytes to initialize the ILI9341.
         // Too many to identify all. For more details, refer to the datasheet.
         constexpr uint8_t data_1[] = {0x03, 0x80, 0x02};
@@ -287,8 +273,7 @@ namespace disp {
                 mem_acc_ctrl[0] = 0xB8;
                 break;
             default:
-                mem_acc_ctrl[0] = 0x08;
-                break;
+                return ESP_ERR_INVALID_ARG;
         }
         TRY(send_cmd(0x36U));
         TRY(send_data({mem_acc_ctrl, sizeof(mem_acc_ctrl)}));
@@ -318,25 +303,12 @@ namespace disp {
             .length           = 8, // 8 bits
             .rxlength         = 0, // We are only transmitting
             .override_freq_hz = 0,
-            .user             = {},
+            .user             = nullptr,
             .tx_buffer        = &cmd,
-            .rx_buffer        = {},
+            .rx_buffer        = nullptr,
         };
 
-        // Polling for a single byte send is alright here
-        return spi_device_polling_transmit(m_handle, &trans);
-    }
-
-    void ili9341_t::spi_trans_done_cb(spi_transaction_t* trans) {
-        // Signal completion from ISR
-        auto  higher_priority_task_woken{pdFALSE};
-        auto* task_handle = static_cast<TaskHandle_t>(trans->user);
-        if (task_handle) {
-            vTaskNotifyGiveFromISR(task_handle, &higher_priority_task_woken);
-        }
-        if (higher_priority_task_woken == pdTRUE) {
-            portYIELD_FROM_ISR();
-        }
+        return spi_device_transmit(m_device_handle, &trans);
     }
 
     esp_err_t ili9341_t::send_data(std::span<const uint8_t> data) {
@@ -344,7 +316,7 @@ namespace disp {
         gpio_set_level(m_config.dc, 1); // Data mode
 
         spi_transaction_t trans = {
-            .flags            = SPI_TRANS_DMA_USE_PSRAM,
+            .flags            = 0,
             .cmd              = 0,
             .addr             = 0,
             .length           = data.size() * 8, // Data length in bits
@@ -353,19 +325,10 @@ namespace disp {
             .user             = xTaskGetCurrentTaskHandle(), // Pass the task handle of the calling
                                                              // task to be notified by the ISR
             .tx_buffer = data.data(),
-            .rx_buffer = {},
+            .rx_buffer = nullptr,
         };
 
-        // Queue transaction
-        TRY(spi_device_queue_trans(m_handle, &trans, pdMS_TO_TICKS(TIMEOUT_MS)));
-
-        // Wait for DMA completion
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(TIMEOUT_MS)) == 0) {
-            ESP_LOGE(TAG, "Failed to send data bytes");
-            return ESP_ERR_TIMEOUT;
-        }
-
-        return ESP_OK;
+        return spi_device_transmit(m_device_handle, &trans);
     }
 
     esp_err_t ili9341_t::set_window(size_t x1, size_t y1, size_t x2, size_t y2) {
