@@ -5,6 +5,8 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
+#include "max98357.hpp"
+#include "inmp441.hpp"
 #include "ili9341.hpp"
 #include "config.hpp"
 
@@ -56,6 +58,9 @@ namespace {
         }
     }
 
+    void audio_task(void* arg) {
+    }
+
 } // namespace
 
 extern "C" {
@@ -63,6 +68,11 @@ extern "C" {
         auto ret = xTaskCreate(disp_task, "Display Task", 4096, {}, 4, {});
         if (ret != pdPASS) {
             ESP_LOGE("MAIN", "Failed to create Display Task");
+            assert(0);
+        }
+        ret = xTaskCreate(audio_task, "Audio Task", 4096, {}, 5, {});
+        if (ret != pdPASS) {
+            ESP_LOGE("MAIN", "Failed to create Audio Task");
             assert(0);
         }
     }
