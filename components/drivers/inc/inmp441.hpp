@@ -1,24 +1,32 @@
 #pragma once
 
-#include "driver/i2s_etm.h"
+#include "driver/i2s_std.h"
 #include "driver/gpio.h"
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include <expected>
-#include <memory>
 #include <span>
 
 namespace mic {
 
     struct config_t {
-        gpio_num_t mclk{GPIO_NUM_NC};
+        gpio_num_t chip_en{GPIO_NUM_NC};
         gpio_num_t bclk{GPIO_NUM_NC};
         gpio_num_t data{GPIO_NUM_NC};
+        gpio_num_t l_r{GPIO_NUM_NC};
         gpio_num_t ws{GPIO_NUM_NC};
+
+        bool use_right_chan{};
+        bool enable_during_init{};
 
         size_t sample_buf_size_bytes{};
     };
+
+    constexpr inline auto TAG{"INMP441"};
+
+    constexpr inline auto SAMPLE_RATE_HZ{48'000UZ};
 
     class inmp441_t {
     public:
@@ -47,14 +55,21 @@ namespace mic {
         [[nodiscard]] esp_err_t deinit();
 
         /**
+         * @brief Enables the INMP441 through the CHIPEN gpio pin.
+         * 
+         * @param enable Whether or not to enable INMP441.
+         *
+         * @return ESP_OK on success, error code otherwise.
+         */
+        [[nodiscard]] esp_err_t enable(bool enable = true);
+
+        /**
          * @brief Samples data from the INMP441, fills the buffer and stops. Not
          *        compatible with the streaming mode.
          *
-         * @param[in] data Buffer to store the data.
-         *
-         * @return ESP_OK if data received successfully, error code otherwise.
+         * @return A span holding the data if received successfully, error code otherwise.
          */
-        [[nodiscard]] esp_err_t get_oneshot_sample(std::span<uint32_t> data);
+        [[nodiscard]] std::expected<std::span<const int32_t>, esp_err_t> get_oneshot_readings();
 
         /**
          * @brief Starts filling any of the available buffers with data. Uses
@@ -78,18 +93,21 @@ namespace mic {
          * 
          * @return The filled data buffer if available, error code otherwise.
          */
-        [[nodiscard]] std::expected<std::span<const uint32_t>, esp_err_t> get_free_buffer(uint32_t timeout_ms = portMAX_DELAY) const;
+        [[nodiscard]] std::expected<std::span<const int32_t>, esp_err_t> get_free_buffer(uint32_t timeout_ms = portMAX_DELAY) const;
 
     private:
-        bool     m_is_initialized{};
-        config_t m_config{};
-
+        bool m_is_initialized{};
+        bool m_is_enabled{};
         bool m_is_streaming{};
-        bool m_is_buf1_active{};
+
+        config_t          m_config{};
+        i2s_chan_handle_t m_handle{};
 
         // Buffers for storing samples
-        std::unique_ptr<uint32_t> m_buf1;
-        std::unique_ptr<uint32_t> m_buf2;
+        int32_t* m_buf1{};
+        int32_t* m_buf2{};
+        bool     m_is_buf1_filled{};
+        bool     m_is_buf2_filled{};
 
         // Helpers
         void cleanup_resources();
