@@ -12,7 +12,7 @@
 
 namespace {
 
-    void disp_task(void* arg) {
+    [[noreturn]] void disp_task(void* arg) {
         (void)arg;
 
         constexpr spi_bus_config_t bus_config = {
@@ -58,7 +58,10 @@ namespace {
         }
     }
 
-    void audio_task(void* arg) {
+    [[noreturn]] void audio_task(void* arg) {
+        (void)arg;
+        while (true) {
+        }
     }
 
 } // namespace

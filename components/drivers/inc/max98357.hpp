@@ -29,8 +29,6 @@ namespace amp {
     };
 
     struct config_t {
-        bool use_right_chan{};
-
         gpio_num_t bclk{GPIO_NUM_NC};
         gpio_num_t data{GPIO_NUM_NC};
         gpio_num_t gain{GPIO_NUM_NC};
@@ -42,14 +40,14 @@ namespace amp {
 
     constexpr inline auto SAMPLE_RATE_HZ{96'000UZ};
 
-    template<gain_t gain, bool use_gain_pin = true>
+    template<gain_t gain, mode_t mode, bool use_gain_pin = true>
     class max98357a_t {
     public:
         max98357a_t() = default;
 
         ~max98357a_t() noexcept {
             if (m_is_initialized) {
-                cleanup_resources();
+                (void)cleanup_resources();
             }
         }
 
@@ -86,6 +84,17 @@ namespace amp {
             TRY(i2s_new_channel(&chan_config, &m_handle, nullptr));
 
             // Configure the I2S channel for standard mode
+            i2s_std_slot_mask_t channel{};
+            if constexpr (mode == mode_t::LEFT_CHANNEL) {
+                channel = I2S_STD_SLOT_LEFT;
+            } else if constexpr (mode == mode_t::RIGHT_CHANNEL) {
+                channel = I2S_STD_SLOT_RIGHT;
+            } else if constexpr (mode == mode_t::STEREO) {
+                channel = I2S_STD_SLOT_BOTH;
+            } else {
+                static_assert(false, "Invalid I2S channel mode");
+            }
+
             const i2s_std_config_t i2s_std_config = {
                 .clk_cfg =
                     {
@@ -93,21 +102,22 @@ namespace amp {
                         .clk_src         = I2S_CLK_SRC_DEFAULT,
                         .ext_clk_freq_hz = 0,
                         .mclk_multiple   = I2S_MCLK_MULTIPLE_1152,
-                        .bclk_div        = 0,
+                        .bclk_div        = 8, // Default setting
                     },
                 .slot_cfg =
                     {
-                        // Use the MAX98357 in 32 bit mono audio mode
+                        // Use the MAX98357 in 32 bit audio mode
                         .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,
                         .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
-                        .slot_mode      = I2S_SLOT_MODE_MONO,
-                        .slot_mask      = m_config.use_right_chan ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT,
-                        .ws_width       = 0,
-                        .ws_pol         = false,
-                        .bit_shift      = false,
-                        .left_align     = true,
-                        .big_endian     = false,
-                        .bit_order_lsb  = false,
+                        .slot_mode      = mode == mode_t::STEREO ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO,
+                        .slot_mask      = channel,
+                        // Since we use a slot size of 32 bits, the WS will be high for 32 BCLK clock cycles
+                        .ws_width      = static_cast<uint32_t>(I2S_SLOT_BIT_WIDTH_32BIT),
+                        .ws_pol        = false,
+                        .bit_shift     = false,
+                        .left_align    = false,
+                        .big_endian    = true,
+                        .bit_order_lsb = false,
                     },
                 .gpio_cfg =
                     {
@@ -151,19 +161,12 @@ namespace amp {
                 } else if constexpr (gain == gain_t::dB_12 || gain == gain_t::dB_15) {
                     gpio_set_level(m_config.gain, 0);
                 } else {
-                    return ESP_ERR_INVALID_ARG;
+                    static_assert(false, "Invalid gain on the MAX98357");
                 }
             }
 
-            // Configure the SD pin
-            const gpio_config_t sd_pin_config = {
-                .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd)),
-                .mode         = GPIO_MODE_OUTPUT,
-                .pull_up_en   = GPIO_PULLUP_DISABLE,
-                .pull_down_en = GPIO_PULLDOWN_DISABLE,
-                .intr_type    = GPIO_INTR_DISABLE,
-            };
-            TRY(gpio_config(&sd_pin_config));
+            // Power on the MAX98357
+            TRY(set_amp_power());
 
             m_is_initialized = true;
             return ESP_OK;
@@ -180,7 +183,7 @@ namespace amp {
                 return ESP_ERR_INVALID_STATE;
             }
 
-            cleanup_resources();
+            TRY(cleanup_resources());
             m_is_initialized = false;
 
             return ESP_OK;
@@ -199,9 +202,9 @@ namespace amp {
                 return ESP_ERR_INVALID_STATE;
             }
 
-            // Power on the MAX98357
-            gpio_set_level(m_config.sd, 1);
             TRY(i2s_channel_enable(m_handle));
+            // Power on the MAX98357
+            TRY(set_amp_power());
 
             size_t num_of_bytes_sent{};
             auto   ret = i2s_channel_write(m_handle, data.data(), (data.size() * sizeof(int32_t)), &num_of_bytes_sent, timeout_ms);
@@ -210,7 +213,7 @@ namespace amp {
             }
 
             // Power off the MAX98357
-            gpio_set_level(m_config.sd, 0);
+            TRY(set_amp_power(false));
             TRY(i2s_channel_disable(m_handle));
 
             return ret;
@@ -222,16 +225,60 @@ namespace amp {
         i2s_chan_handle_t m_handle{};
 
         // Helpers
-        void cleanup_resources() {
+        [[nodiscard]] esp_err_t cleanup_resources() {
             if (m_handle) {
-                i2s_del_channel(m_handle);
+                TRY(i2s_del_channel(m_handle));
                 m_handle = nullptr;
             }
 
-            gpio_reset_pin(m_config.sd);
-            gpio_reset_pin(m_config.gain);
+            TRY(gpio_reset_pin(m_config.sd));
+            TRY(gpio_reset_pin(m_config.gain));
 
             m_config = {};
+
+            return ESP_OK;
+        }
+
+        [[nodiscard]] esp_err_t set_amp_power(bool power_on = true) {
+            if (power_on) {
+                if constexpr (mode == mode_t::LEFT_CHANNEL) {
+                    // For the MAX98357, if we want to use the left channel, we don't have to connect any
+                    // external resistors. Instead, we just drive the pin HIGH dircetly to enable it.
+                    const gpio_config_t sd_pin_config = {
+                        .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd)),
+                        .mode         = GPIO_MODE_OUTPUT,
+                        .pull_up_en   = GPIO_PULLUP_DISABLE,
+                        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                        .intr_type    = GPIO_INTR_DISABLE,
+                    };
+                    TRY(gpio_config(&sd_pin_config));
+                    gpio_set_level(m_config.sd, 1);
+                } else if constexpr (mode == mode_t::RIGHT_CHANNEL || mode == mode_t::STEREO) {
+                    // Whereas if we wanted to use the right channel or stereo modes, we would have to connect
+                    // resistors of 100k-ohm and 200k-ohm respectively. This lets the resistor bias the pins to
+                    // 1/2 * Vdd and 1/3 * Vdd respectively, which is what the MAX98357 needs to use right or mixed
+                    // stereo mode. We also have to make the pins input to prevent the mESP32 from driving the pin.
+                    const gpio_config_t sd_pin_config = {
+                        .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd)),
+                        .mode         = GPIO_MODE_INPUT,
+                        .pull_up_en   = GPIO_PULLUP_DISABLE,
+                        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                        .intr_type    = GPIO_INTR_DISABLE,
+                    };
+                    TRY(gpio_config(&sd_pin_config));
+                }
+            } else {
+                // To power down the MAX98357, we can just drive the SD pin low.
+                const gpio_config_t sd_pin_config = {
+                    .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd)),
+                    .mode         = GPIO_MODE_OUTPUT,
+                    .pull_up_en   = GPIO_PULLUP_DISABLE,
+                    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                    .intr_type    = GPIO_INTR_DISABLE,
+                };
+                TRY(gpio_config(&sd_pin_config));
+                gpio_set_level(m_config.sd, 0);
+            }
         }
     };
 

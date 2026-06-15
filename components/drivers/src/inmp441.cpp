@@ -69,21 +69,24 @@ namespace mic {
                     .clk_src         = I2S_CLK_SRC_DEFAULT,
                     .ext_clk_freq_hz = 0,
                     .mclk_multiple   = I2S_MCLK_MULTIPLE_1152,
-                    .bclk_div        = 0,
+                    .bclk_div        = 8, // Default setting
                 },
             .slot_cfg =
                 {
-                    //
+                    // Use the INMP441 in 32 bit audio mode. In reality, the data we receive
+                    // is 24 bits, but this is to avoid alignment and similar requirements of
+                    // ESP32-S3 when using 24 bit audio.
                     .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,
                     .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
                     .slot_mode      = I2S_SLOT_MODE_MONO,
                     .slot_mask      = m_config.use_right_chan ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT,
-                    .ws_width       = 0,
-                    .ws_pol         = false,
-                    .bit_shift      = false,
-                    .left_align     = true,
-                    .big_endian     = false,
-                    .bit_order_lsb  = false,
+                    // Since we use a slot size of 32 bits, the WS will be high for 32 BCLK clock cycles
+                    .ws_width      = static_cast<uint32_t>(I2S_SLOT_BIT_WIDTH_32BIT),
+                    .ws_pol        = false,
+                    .bit_shift     = false,
+                    .left_align    = false,
+                    .big_endian    = true,
+                    .bit_order_lsb = false,
                 },
             .gpio_cfg =
                 {
