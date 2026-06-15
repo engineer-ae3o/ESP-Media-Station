@@ -12,14 +12,14 @@
 namespace mic {
 
     struct config_t {
+        bool use_right_chan{};
+        bool enable_during_init{};
+
         gpio_num_t chip_en{GPIO_NUM_NC};
         gpio_num_t bclk{GPIO_NUM_NC};
         gpio_num_t data{GPIO_NUM_NC};
         gpio_num_t l_r{GPIO_NUM_NC};
         gpio_num_t ws{GPIO_NUM_NC};
-
-        bool use_right_chan{};
-        bool enable_during_init{};
 
         size_t sample_buf_size_bytes{};
     };

@@ -44,7 +44,7 @@ namespace mic {
             gpio_set_level(m_config.chip_en, true);
         }
 
-        // Set whether to use the right channel
+        // Set whether to use the right channel of the INMP441
         // LOW is to make the INMP441 output on the left channel, HIGH is for the right channel
         gpio_set_level(m_config.l_r, m_config.use_right_chan);
 
@@ -62,7 +62,7 @@ namespace mic {
         TRY(i2s_new_channel(&chan_config, nullptr, &m_handle));
 
         // Configure the I2S channel for standard mode
-        const i2s_std_config_t i2s_config = {
+        const i2s_std_config_t i2s_std_config = {
             .clk_cfg =
                 {
                     .sample_rate_hz  = SAMPLE_RATE_HZ,
@@ -100,7 +100,7 @@ namespace mic {
                         },
                 },
         };
-        TRY(i2s_channel_init_std_mode(m_handle, &i2s_config));
+        TRY(i2s_channel_init_std_mode(m_handle, &i2s_std_config));
         TRY(i2s_channel_enable(m_handle));
 
         // Allocate the buffers
@@ -180,16 +180,16 @@ namespace mic {
 
     // Helpers
     void inmp441_t::cleanup_resources() {
-        // Disable the INMP441 before cleaning any resources
-        gpio_set_level(m_config.chip_en, false);
-        gpio_reset_pin(m_config.chip_en);
-        gpio_reset_pin(m_config.l_r);
-
         if (m_handle) {
             i2s_channel_disable(m_handle);
             i2s_del_channel(m_handle);
             m_handle = nullptr;
         }
+
+        // Disable the INMP441 before cleaning any resources
+        gpio_set_level(m_config.chip_en, false);
+        gpio_reset_pin(m_config.chip_en);
+        gpio_reset_pin(m_config.l_r);
 
         if (m_buf1) {
             heap_caps_free(m_buf1);
@@ -199,6 +199,8 @@ namespace mic {
             heap_caps_free(m_buf2);
             m_buf2 = nullptr;
         }
+
+        m_config = {};
     }
 
 } // namespace mic
