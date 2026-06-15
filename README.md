@@ -20,7 +20,7 @@ The project targets intermediate ESP-IDF development and serves as a platform fo
 | Camera | OV3660 via FPC connector (DVP interface) |
 | Display | ILI9341 320x240 TFT with resistive touch |
 | Audio Input | INMP441 MEMS microphone |
-| Audio Output | MAX98357 Audio Amp. and standard  |
+| Audio Output | MAX98357 Audio Amp. and standard 4-ohm speaker |
 
 ---
 

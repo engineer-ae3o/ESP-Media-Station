@@ -64,18 +64,10 @@ namespace mic {
         [[nodiscard]] esp_err_t enable(bool enable = true);
 
         /**
-         * @brief Samples data from the INMP441, fills the buffer and stops. Not
-         *        compatible with the streaming mode.
-         *
-         * @return A span holding the data if received successfully, error code otherwise.
-         */
-        [[nodiscard]] std::expected<std::span<const int32_t>, esp_err_t> get_oneshot_readings();
-
-        /**
          * @brief Starts filling any of the available buffers with data. Uses
          *        double buffering. When one buffer is filled, swaps to the other.
          * 
-         * @return ESP_OK if data started streaming successfully successfully, error code otherwise.
+         * @return ESP_OK if data started streaming successfully, error code otherwise.
          */
         [[nodiscard]] esp_err_t start_stream();
 

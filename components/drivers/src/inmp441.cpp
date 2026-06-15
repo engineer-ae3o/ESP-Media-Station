@@ -54,7 +54,7 @@ namespace mic {
         const i2s_chan_config_t chan_config = {
             .id                   = I2S_NUM_AUTO,
             .role                 = I2S_ROLE_MASTER,
-            .dma_desc_num         = 6,
+            .dma_desc_num         = 12, // 12 DMA descriptors
             .dma_frame_num        = 240,
             .auto_clear_after_cb  = false,
             .auto_clear_before_cb = false,
@@ -143,16 +143,6 @@ namespace mic {
         }
 
         return ESP_OK;
-    }
-
-    std::expected<std::span<const int32_t>, esp_err_t> inmp441_t::get_oneshot_readings() {
-        if (!m_is_initialized || !m_is_enabled || m_is_streaming) {
-            return std::unexpected(ESP_ERR_INVALID_STATE);
-        }
-
-        // TODO: Handle oneshot sampling logic
-
-        return {};
     }
 
     esp_err_t inmp441_t::start_stream() {
