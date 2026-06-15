@@ -1,5 +1,3 @@
-#pragma once
-
 #include "inmp441.hpp"
 #include "utils.hpp"
 

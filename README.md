@@ -49,6 +49,5 @@ Both flash encryption and secure boot are configured via eFuse and are irreversi
 Requires ESP-IDF v6.x installed via EIM.
 
 ```bash
-idf.py set-target esp32s3
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor

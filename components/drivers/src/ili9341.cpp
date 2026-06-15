@@ -36,7 +36,7 @@ namespace disp {
 
         auto ret = gpio_config(&io_conf);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to configure RST and DC pins", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to configure RST and DC pins: %s", esp_err_to_name(ret));
             return ret;
         }
 
@@ -99,7 +99,7 @@ namespace disp {
         return ESP_OK;
     }
 
-    esp_err_t ili9341_t::flush(size_t x1, size_t y1, size_t x2, size_t y2, std::span<const uint16_t> data) {
+    esp_err_t ili9341_t::flush(const coord_t& coord, std::span<const uint16_t> data) {
         if (!m_is_initialized) {
             return ESP_ERR_INVALID_STATE;
         }
@@ -108,12 +108,13 @@ namespace disp {
             return ESP_ERR_INVALID_ARG;
         }
 
-        if (x1 >= MAX_WIDTH || x2 >= MAX_WIDTH || x1 > x2 || y1 >= MAX_HEIGHT || y2 >= MAX_HEIGHT || y1 > y2) {
+        if (coord.x1 >= MAX_WIDTH || coord.x2 >= MAX_WIDTH || coord.x1 > coord.x2 || coord.y1 >= MAX_HEIGHT || coord.y2 >= MAX_HEIGHT ||
+            coord.y1 > coord.y2) {
             return ESP_ERR_INVALID_ARG;
         }
 
         // Set the pixel window
-        TRY(set_window(x1, y1, x2, y2));
+        TRY(set_window(coord));
 
         // Send the memory write command
         TRY(send_cmd(0x2CU));
@@ -149,18 +150,18 @@ namespace disp {
 
         // Get offsets
         constexpr auto offset{MAX_HEIGHT / num_of_times_to_send_color_buf};
-        size_t         y1{};
-        size_t         y2{offset - 1};
+        uint16_t       y1{};
+        uint16_t       y2{offset - 1};
         esp_err_t      ret{ESP_OK};
 
         for (size_t i{}; i < num_of_times_to_send_color_buf; i++) {
-            ret = flush(0, y1, MAX_WIDTH - 1, y2, buf);
+            ret = flush({0, y1, MAX_WIDTH - 1, y2}, buf);
             if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "Failed to transmit color buffer on %d iteration: %s", i, esp_err_to_name(ret));
+                ESP_LOGW(TAG, "Failed to transmit color buffer on %zu iteration: %s", i, esp_err_to_name(ret));
                 break;
             }
             // Get new height offsets
-            y1 = y2;
+            y1 = y2 + 1;
             y2 += offset;
         }
 
@@ -311,6 +312,32 @@ namespace disp {
         return spi_device_transmit(m_device_handle, &trans);
     }
 
+    esp_err_t ili9341_t::set_window(const coord_t& coord) {
+
+        // The ILI9341 uses big endian alignment so we send high byte first
+        // Column address set
+        const std::array<uint8_t, 4> caset_data = {
+            static_cast<uint8_t>((coord.x1 >> 8) & 0xFFU),
+            static_cast<uint8_t>(coord.x1 & 0xFFU),
+            static_cast<uint8_t>((coord.x2 >> 8U) & 0xFFU),
+            static_cast<uint8_t>(coord.x2 & 0xFFU),
+        };
+        TRY(send_cmd(0x2AU));
+        TRY(send_data(caset_data));
+
+        // Row address set
+        const std::array<uint8_t, 4> raset_data = {
+            static_cast<uint8_t>((coord.y1 >> 8) & 0xFF),
+            static_cast<uint8_t>(coord.y1 & 0xFF),
+            static_cast<uint8_t>((coord.y2 >> 8) & 0xFF),
+            static_cast<uint8_t>(coord.y2 & 0xFF),
+        };
+        TRY(send_cmd(0x2BU));
+        TRY(send_data(raset_data));
+
+        return ESP_OK;
+    }
+
     esp_err_t ili9341_t::send_data(std::span<const uint8_t> data) {
 
         gpio_set_level(m_config.dc, 1); // Data mode
@@ -329,32 +356,6 @@ namespace disp {
         };
 
         return spi_device_transmit(m_device_handle, &trans);
-    }
-
-    esp_err_t ili9341_t::set_window(size_t x1, size_t y1, size_t x2, size_t y2) {
-
-        // The ILI9341 uses big endian alignment so we send high byte first
-        // Column address set
-        const std::array<uint8_t, 4> caset_data = {
-            static_cast<uint8_t>((x1 >> 8) & 0xFFU),
-            static_cast<uint8_t>(x1 & 0xFFU),
-            static_cast<uint8_t>((x2 >> 8U) & 0xFFU),
-            static_cast<uint8_t>(x2 & 0xFFU),
-        };
-        TRY(send_cmd(0x2AU));
-        TRY(send_data(caset_data));
-
-        // Row address set
-        const std::array<uint8_t, 4> raset_data = {
-            static_cast<uint8_t>((y1 >> 8) & 0xFF),
-            static_cast<uint8_t>(y1 & 0xFF),
-            static_cast<uint8_t>((y2 >> 8) & 0xFF),
-            static_cast<uint8_t>(y2 & 0xFF),
-        };
-        TRY(send_cmd(0x2BU));
-        TRY(send_data(raset_data));
-
-        return ESP_OK;
     }
 
 } // namespace disp
