@@ -16,14 +16,6 @@ useStlAlgorithm
 unusedFunction
 cstyleCast
 
-*:components/cmsis-device-f1/*
-*:components/littlefs/*
-*:components/freertos/*
-*:components/Unity/*
-*:components/etl/*
-*:components/f103-hal/*
-*:components/ascon-suite/*
-
 comparePointers
 dangerousTypeCast
 constVariablePointer

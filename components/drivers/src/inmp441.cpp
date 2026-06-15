@@ -54,8 +54,8 @@ namespace mic {
         const i2s_chan_config_t chan_config = {
             .id                   = I2S_NUM_AUTO,
             .role                 = I2S_ROLE_MASTER,
-            .dma_desc_num         = 12, // 12 DMA descriptors
-            .dma_frame_num        = 240,
+            .dma_desc_num         = 12,
+            .dma_frame_num        = 960,
             .auto_clear_after_cb  = false,
             .auto_clear_before_cb = false,
             .allow_pd             = true,
@@ -75,7 +75,8 @@ namespace mic {
                 },
             .slot_cfg =
                 {
-                    .data_bit_width = I2S_DATA_BIT_WIDTH_24BIT,
+                    //
+                    .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,
                     .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
                     .slot_mode      = I2S_SLOT_MODE_MONO,
                     .slot_mask      = m_config.use_right_chan ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT,

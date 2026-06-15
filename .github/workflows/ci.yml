@@ -1,0 +1,47 @@
+name: CI
+
+on:
+    push:
+    pull_request:
+
+jobs:
+    format:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+
+          - name: Install clang-format
+            run: sudo apt-get update && sudo apt-get install -y clang-format-21
+
+          - name: Check formatting
+            run: |
+              find main components -regextype posix-extended \
+                -regex '.*\.(c|h|cpp|hpp)' -print0 \
+                | xargs -0 clang-format --dry-run --Werror
+
+    build-and-analyze:
+        runs-on: ubuntu-latest
+        container:
+            image: espressif/idf:v6.0.1
+        steps:
+          - uses: actions/checkout@v4
+            with:
+              submodules: recursive
+
+          - name: Build
+            run: |
+              . $IDF_PATH/export.sh
+              idf.py build
+
+          - name: cppcheck
+            run: |
+              . $IDF_PATH/export.sh
+              apt-get update && apt-get install -y cppcheck
+              cmake --build build --target cppcheck
+
+          - name: Upload cppcheck report
+            if: always()
+            uses: actions/upload-artifact@v4
+            with:
+              name: cppcheck-report
+              path: build/cppcheck_report.txt
