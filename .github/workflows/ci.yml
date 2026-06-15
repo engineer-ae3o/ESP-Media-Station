@@ -43,6 +43,7 @@ jobs:
             run: |
               . $IDF_PATH/export.sh
               apt-get update && apt-get install -y cppcheck
+              idf.py reconfigure
               cmake --build build --target cppcheck
 
           - name: Upload cppcheck report

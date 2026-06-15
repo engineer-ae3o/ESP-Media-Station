@@ -279,6 +279,7 @@ namespace amp {
                 TRY(gpio_config(&sd_pin_config));
                 gpio_set_level(m_config.sd, 0);
             }
+            return ESP_OK;
         }
     };
 
