@@ -102,7 +102,7 @@ namespace mic {
         bool     m_is_buf2_filled{};
 
         // Helpers
-        void cleanup_resources();
+        [[nodiscard]] esp_err_t cleanup_resources();
     };
 
 } // namespace mic

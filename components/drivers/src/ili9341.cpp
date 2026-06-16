@@ -349,10 +349,9 @@ namespace disp {
             .length           = data.size() * 8, // Data length in bits
             .rxlength         = 0,               // We are only transmitting
             .override_freq_hz = 0,
-            .user             = xTaskGetCurrentTaskHandle(), // Pass the task handle of the calling
-                                                             // task to be notified by the ISR
-            .tx_buffer = data.data(),
-            .rx_buffer = nullptr,
+            .user             = nullptr,
+            .tx_buffer        = data.data(),
+            .rx_buffer        = nullptr,
         };
 
         return spi_device_transmit(m_device_handle, &trans);

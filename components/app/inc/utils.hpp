@@ -13,4 +13,13 @@ namespace utils {
         }                                                                                                                                  \
     } while (0)
 
+#define TRY_WITH_FUNC(func, err_cb)                                                                                                        \
+    do {                                                                                                                                   \
+        if (auto ret_ = (func); ret_ != ESP_OK) {                                                                                          \
+            ESP_LOGE("ERR", "%s:%s:Line %d failed: %s", __FILE__, #func, __LINE__, esp_err_to_name(ret_));                                 \
+            (err_cb);                                                                                                                      \
+            return ret_;                                                                                                                   \
+        }                                                                                                                                  \
+    } while (0)
+
 } // namespace utils
