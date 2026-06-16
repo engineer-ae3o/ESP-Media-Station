@@ -48,10 +48,10 @@ jobs:
           - name: Run Cppcheck
             run: |
               . $IDF_PATH/export.sh
-              idf.py reconfigure
               apt-get update
               apt-get install -y cppcheck
               cppcheck --version
+              idf.py reconfigure
               cmake --build build --target cppcheck
 
           - name: Upload cppcheck report
