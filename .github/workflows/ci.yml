@@ -49,8 +49,8 @@ jobs:
             run: |
               . $IDF_PATH/export.sh
               idf.py reconfigure
-              sudo apt-get update
-              sudo apt-get install -y cppcheck
+              apt-get update
+              apt-get install -y cppcheck
               cppcheck --version
               cmake --build build --target cppcheck
 
