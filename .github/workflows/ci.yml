@@ -16,8 +16,6 @@ jobs:
                 chmod +x llvm.sh
                 sudo ./llvm.sh 21
                 sudo apt-get install -y clang-format-21
-                wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | sudo apt-key add -
-                echo "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/kitware.list
 
           - name: Check formatting
             run: |
@@ -39,11 +37,21 @@ jobs:
               . $IDF_PATH/export.sh
               idf.py build size
 
-          - name: cppcheck
+          - name: Build tests
             run: |
               . $IDF_PATH/export.sh
-              apt install cppcheck -y
               idf.py reconfigure
+              cd tests
+              idf.py build size
+              cd ..
+
+          - name: Run Cppcheck
+            run: |
+              . $IDF_PATH/export.sh
+              idf.py reconfigure
+              sudo apt-get update
+              sudo apt-get install -y cppcheck
+              cppcheck --version
               cmake --build build --target cppcheck
 
           - name: Upload cppcheck report
