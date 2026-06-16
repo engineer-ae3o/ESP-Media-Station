@@ -27,9 +27,7 @@ namespace disp {
         gpio_num_t dc{GPIO_NUM_NC};
         gpio_num_t rst{GPIO_NUM_NC};
 
-        // Display parameters
-        size_t  width{};
-        size_t  height{};
+        // Display parameter
         uint8_t rotation{}; // 0-3 for different orientations
     };
 

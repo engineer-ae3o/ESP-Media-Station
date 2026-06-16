@@ -85,7 +85,7 @@ namespace mic {
          * 
          * @return The filled data buffer if available, error code otherwise.
          */
-        [[nodiscard]] std::expected<std::span<const int32_t>, esp_err_t> get_free_buffer(uint32_t timeout_ms = portMAX_DELAY) const;
+        [[nodiscard]] std::expected<std::span<const uint32_t>, esp_err_t> get_free_buffer(uint32_t timeout_ms = portMAX_DELAY) const;
 
     private:
         bool m_is_initialized{};
@@ -96,13 +96,13 @@ namespace mic {
         i2s_chan_handle_t m_handle{};
 
         // Buffers for storing samples
-        int32_t* m_buf1{};
-        int32_t* m_buf2{};
-        bool     m_is_buf1_filled{};
-        bool     m_is_buf2_filled{};
+        uint32_t* m_buf1{};
+        uint32_t* m_buf2{};
+        bool      m_is_buf1_filled{};
+        bool      m_is_buf2_filled{};
 
         // Helpers
-        void cleanup_resources();
+        [[nodiscard]] esp_err_t cleanup_resources();
     };
 
 } // namespace mic

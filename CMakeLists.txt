@@ -18,6 +18,9 @@ if (CPPCHECK)
             --file-filter=${CMAKE_SOURCE_DIR}/components/drivers/**
             --file-filter=${CMAKE_SOURCE_DIR}/components/app/**
             --output-file=${CMAKE_BINARY_DIR}/cppcheck_report.txt
+            --checkers-report=${CMAKE_BINARY_DIR}/cppcheck_checks.txt
         COMMENT "Running static analysis..."
     )
+else()
+    message(WARNING "cppcheck not found")
 endif()
