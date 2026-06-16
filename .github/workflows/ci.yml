@@ -18,7 +18,7 @@ jobs:
                 sudo apt-get install -y clang-format-21
                 wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | sudo apt-key add -
                 echo "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/kitware.list
-              
+
           - name: Check formatting
             run: |
                 find . \
@@ -37,12 +37,13 @@ jobs:
           - name: Build
             run: |
               . $IDF_PATH/export.sh
-              idf.py build
+              idf.py build size
 
           - name: cppcheck
             run: |
               . $IDF_PATH/export.sh
-              apt-get update && apt-get install -y cppcheck
+              sudo apt install cppcheck -y
+              idf.py reconfigure
               cmake --build build --target cppcheck
 
           - name: Upload cppcheck report
