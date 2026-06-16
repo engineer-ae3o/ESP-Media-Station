@@ -42,7 +42,7 @@ jobs:
           - name: cppcheck
             run: |
               . $IDF_PATH/export.sh
-              sudo apt install cppcheck -y
+              apt install cppcheck -y
               idf.py reconfigure
               cmake --build build --target cppcheck
 

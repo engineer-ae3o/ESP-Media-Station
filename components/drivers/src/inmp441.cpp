@@ -54,7 +54,7 @@ namespace mic {
             .allow_pd             = true,
             .intr_priority        = 4,
         };
-        TRY(i2s_new_channel(&chan_config, nullptr, &m_handle));
+        TRY_WITH_FUNC(i2s_new_channel(&chan_config, nullptr, &m_handle), (void)cleanup_resources());
 
         // Configure the I2S channel for standard mode
         const i2s_std_config_t i2s_std_config = {
