@@ -3,7 +3,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
-namespace utils {
+namespace utils {} // namespace utils
 
 #define TRY(func)                                                                                                                          \
     do {                                                                                                                                   \
@@ -21,5 +21,3 @@ namespace utils {
             return ret_;                                                                                                                   \
         }                                                                                                                                  \
     } while (0)
-
-} // namespace utils

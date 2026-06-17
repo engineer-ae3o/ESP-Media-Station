@@ -47,21 +47,20 @@ namespace mic {
         const i2s_chan_config_t chan_config = {
             .id                   = I2S_NUM_AUTO,
             .role                 = I2S_ROLE_MASTER,
-            .dma_desc_num         = 12,
-            .dma_frame_num        = 960,
+            .dma_desc_num         = 8,
+            .dma_frame_num        = 1024,
             .auto_clear_after_cb  = false, // Only used for TX
             .auto_clear_before_cb = false, // Only used for TX
             .allow_pd             = true,
-            .intr_priority        = 4,
+            .intr_priority        = 4, // Average value
         };
         TRY_WITH_FUNC(i2s_new_channel(&chan_config, nullptr, &m_handle), (void)cleanup_resources());
 
-        // Configure the I2S channel for standard mode
         const i2s_std_config_t i2s_std_config = {
             .clk_cfg =
                 {
                     .sample_rate_hz  = SAMPLE_RATE_HZ,
-                    .clk_src         = I2S_CLK_SRC_PLL_240M, // 240MHz divides cleanly to 48kHz
+                    .clk_src         = I2S_CLK_SRC_PLL_240M,
                     .ext_clk_freq_hz = 0,
                     .mclk_multiple   = I2S_MCLK_MULTIPLE_1152, // A higher MCLK multiple reduces clock jitter on BCLK and WS
                     .bclk_div        = 8,                      // Default setting. Not used in master mode
@@ -79,10 +78,10 @@ namespace mic {
                     .slot_mode      = I2S_SLOT_MODE_MONO,
                     .slot_mask      = m_config.use_right_chan ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT,
                     // Since we use a slot size of 32 bits, the WS will be high for 32 BCLK clock cycles
-                    .ws_width      = static_cast<uint32_t>(I2S_SLOT_BIT_WIDTH_32BIT),
+                    .ws_width      = std::to_underlying(I2S_SLOT_BIT_WIDTH_32BIT),
                     .ws_pol        = false, // WS should be low first, that is, data starts on the rising edge
-                    .bit_shift     = false, // No need for bit shifts
-                    .left_align    = false,
+                    .bit_shift     = true,  // Bit shift for Philips mode
+                    .left_align    = false, // Left alignment is irrelevant here since slot size == data size
                     .big_endian    = true,  // The INMP441 expects MSB first till the LSB as the last bit
                     .bit_order_lsb = false, // LSB is not first
                 },
@@ -102,12 +101,11 @@ namespace mic {
                 },
         };
         TRY_WITH_FUNC(i2s_channel_init_std_mode(m_handle, &i2s_std_config), (void)cleanup_resources());
-        TRY_WITH_FUNC(i2s_channel_enable(m_handle), (void)cleanup_resources());
 
         // Allocate the buffers
-        m_buf1 = static_cast<int32_t*>(
+        m_buf1 = static_cast<uint32_t*>(
             heap_caps_malloc(m_config.sample_buf_size_bytes, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
-        m_buf2 = static_cast<int32_t*>(
+        m_buf2 = static_cast<uint32_t*>(
             heap_caps_malloc(m_config.sample_buf_size_bytes, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
 
         if (m_buf1 == nullptr || m_buf2 == nullptr) {
@@ -137,12 +135,17 @@ namespace mic {
             return ESP_ERR_INVALID_STATE;
         }
 
-        // HIGH on the CHIPEN pin means to enable the INMP441
-        gpio_set_level(m_config.chip_en, enable);
         m_is_enabled = enable;
         if (m_is_enabled) {
-            // If we are enabling, a delay of ~45ms is mandatory to allow it stabilize
+            // If we are enabling, a delay of ~45ms is mandatory to allow the INMP441 fully stabilize
+            gpio_set_level(m_config.chip_en, 1);
             vTaskDelay(pdMS_TO_TICKS(45));
+            // Enable the I2S channel after the INMP441 is fully powered
+            TRY(i2s_channel_enable(m_handle));
+        } else {
+            // Disable the I2S channel before we disable the INMP441
+            TRY(i2s_channel_disable(m_handle));
+            gpio_set_level(m_config.chip_en, 0);
         }
 
         return ESP_OK;
@@ -172,7 +175,7 @@ namespace mic {
         return ESP_OK;
     }
 
-    std::expected<std::span<const int32_t>, esp_err_t> inmp441_t::get_free_buffer(uint32_t timeout_ms) const {
+    std::expected<std::span<const uint32_t>, esp_err_t> inmp441_t::get_free_buffer(uint32_t timeout_ms) const {
         if (!m_is_initialized) {
             return std::unexpected(ESP_ERR_INVALID_STATE);
         }
@@ -185,15 +188,18 @@ namespace mic {
     // Helpers
     esp_err_t inmp441_t::cleanup_resources() {
         // Disable the INMP441 before cleaning any resources
-        gpio_set_level(m_config.chip_en, 0);
-        m_is_enabled = false;
+        if (m_is_enabled) {
+            // Disable the I2S channel before we disable the INMP441
+            TRY(i2s_channel_disable(m_handle));
+            gpio_set_level(m_config.chip_en, 0);
+            m_is_enabled = false;
+        }
 
         gpio_reset_pin(m_config.chip_en);
         gpio_reset_pin(m_config.l_r);
         m_config = {};
 
         if (m_handle) {
-            TRY(i2s_channel_disable(m_handle));
             TRY(i2s_del_channel(m_handle));
             m_handle       = nullptr;
             m_is_streaming = false;

@@ -108,9 +108,21 @@ namespace disp {
             return ESP_ERR_INVALID_ARG;
         }
 
-        if (coord.x1 >= MAX_WIDTH || coord.x2 >= MAX_WIDTH || coord.x1 > coord.x2 || coord.y1 >= MAX_HEIGHT || coord.y2 >= MAX_HEIGHT ||
-            coord.y1 > coord.y2) {
-            return ESP_ERR_INVALID_ARG;
+        if (m_config.rotation == 0 || m_config.rotation == 2) {
+            // Potrait mode
+            if (coord.x1 >= MAX_WIDTH || coord.x2 >= MAX_WIDTH || coord.x1 > coord.x2 || coord.y1 >= MAX_HEIGHT || coord.y2 >= MAX_HEIGHT ||
+                coord.y1 > coord.y2) {
+                return ESP_ERR_INVALID_ARG;
+            }
+        } else if (m_config.rotation == 1 || m_config.rotation == 3) {
+            // Landscape mode on the hardware level: the coordinates get flipped, so shouldn't block
+            // the flushes on what would appear to be out of bounds accesses. x is height, y is width
+            if (coord.x1 >= MAX_HEIGHT || coord.x2 >= MAX_HEIGHT || coord.x1 > coord.x2 || coord.y1 >= MAX_WIDTH || coord.y2 >= MAX_WIDTH ||
+                coord.y1 > coord.y2) {
+                return ESP_ERR_INVALID_ARG;
+            }
+        } else {
+            return ESP_ERR_INVALID_STATE;
         }
 
         // Set the pixel window

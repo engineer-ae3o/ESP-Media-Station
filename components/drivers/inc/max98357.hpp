@@ -74,12 +74,12 @@ namespace amp {
             const i2s_chan_config_t chan_config = {
                 .id                   = I2S_NUM_AUTO,
                 .role                 = I2S_ROLE_MASTER,
-                .dma_desc_num         = 12,
-                .dma_frame_num        = 960,
-                .auto_clear_after_cb  = true,
+                .dma_desc_num         = 8,
+                .dma_frame_num        = 1024,
+                .auto_clear_after_cb  = false,
                 .auto_clear_before_cb = false,
                 .allow_pd             = true,
-                .intr_priority        = 5,
+                .intr_priority        = 5, // Moderately high
             };
             TRY(i2s_new_channel(&chan_config, &m_handle, nullptr));
 
@@ -87,7 +87,7 @@ namespace amp {
                 .clk_cfg =
                     {
                         .sample_rate_hz  = SAMPLE_RATE_HZ,
-                        .clk_src         = I2S_CLK_SRC_PLL_240M, // 240MHz divides cleanly to 48kHz
+                        .clk_src         = I2S_CLK_SRC_PLL_240M,
                         .ext_clk_freq_hz = 0,
                         .mclk_multiple   = I2S_MCLK_MULTIPLE_1152, // A higher MCLK multiple reduces clock jitter on BCLK and WS
                         .bclk_div        = 8,                      // Default setting. Not used in master mode
@@ -102,9 +102,9 @@ namespace amp {
                         // Since we use a slot size of 32 bits, the WS will be high for 32 BCLK clock cycles
                         .ws_width      = std::to_underlying(I2S_SLOT_BIT_WIDTH_32BIT),
                         .ws_pol        = false, // WS should be low first, that is, data starts on the rising edge
-                        .bit_shift     = true,  // Bit shift for Phillips mode
-                        .left_align    = false, // The MAX98357 uses Philips, not LSB justified
-                        .big_endian    = true,  // The MAX98357 expects MSB first till the LSB as the last bit
+                        .bit_shift     = true,  // Bit shift for Philips mode
+                        .left_align    = false, // Left alignment is irrelevant here since slot size == data size
+                        .big_endian    = true,  // The MAX98357 expects MSB first then the LSB as the last bit
                         .bit_order_lsb = false, // LSB is not first
                     },
                 .gpio_cfg =
@@ -242,12 +242,12 @@ namespace amp {
          * 
          * @return ESP_OK if data sent successfully, error code otherwise.
          */
-        [[nodiscard]] esp_err_t send_audio_buf(std::span<int32_t> data, uint32_t timeout_ms = portMAX_DELAY) {
+        [[nodiscard]] esp_err_t send_audio_buf(std::span<const uint32_t> data, uint32_t timeout_ms = portMAX_DELAY) {
             if (!m_is_initialized || !m_is_on) {
                 return ESP_ERR_INVALID_STATE;
             }
 
-            const auto bytes_to_send = data.size() * sizeof(int32_t);
+            const auto bytes_to_send = data.size() * sizeof(uint32_t);
             size_t     num_of_bytes_sent{};
 
             TRY(i2s_channel_write(m_handle, data.data(), bytes_to_send, &num_of_bytes_sent, timeout_ms));

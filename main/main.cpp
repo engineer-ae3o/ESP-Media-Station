@@ -39,8 +39,6 @@ namespace {
             .cs                 = config::LCD_CS_PIN,
             .dc                 = config::LCD_DC_PIN,
             .rst                = config::LCD_RST_PIN,
-            .width              = disp::MAX_WIDTH,
-            .height             = disp::MAX_HEIGHT,
             .rotation           = 0,
         };
 
