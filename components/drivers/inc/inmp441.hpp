@@ -6,8 +6,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include <expected>
 #include <span>
+#include <utility>
+#include <expected>
 
 namespace mic {
 
@@ -20,16 +21,33 @@ namespace mic {
         gpio_num_t data{GPIO_NUM_NC};
         gpio_num_t l_r{GPIO_NUM_NC};
         gpio_num_t ws{GPIO_NUM_NC};
-
-        size_t sample_buf_size_bytes{};
     };
-
-    constexpr inline auto TAG{"INMP441"};
-
-    constexpr inline auto SAMPLE_RATE_HZ{48'000UZ};
 
     class inmp441_t {
     public:
+        // Tag for identification in ESP_LOGx macros
+        constexpr static auto* TAG{"INMP441"};
+
+        // Sampling rate of the I2S channel
+        constexpr static size_t SAMPLE_RATE_HZ = 48'000;
+
+        // Hardware limit on the DMA buffer size
+        constexpr static size_t MAX_DMA_BUF_SIZE = 4092;
+
+        // Number of DMA descriptors being used
+        constexpr static size_t DMA_DESCR_NUM = 2;
+
+        // Frame size is (32 bits * 1 slot / 8) bytes
+        // We use 1 slot since the INMP441 is a mono mic
+        constexpr static size_t FRAME_SIZE = 1 * std::to_underlying(I2S_SLOT_BIT_WIDTH_32BIT) / 8;
+
+        // Number of frames inside the DMA buffer
+        constexpr static size_t DMA_FRAME_NUM = MAX_DMA_BUF_SIZE / FRAME_SIZE;
+
+        // Size of our receiving buffer: Gotten from the number of DMA
+        // frames, the DMA descriptor number and size of a frame
+        constexpr static size_t RECV_BUF_SIZE = DMA_FRAME_NUM * DMA_DESCR_NUM * FRAME_SIZE;
+
         inmp441_t() = default;
         ~inmp441_t() noexcept;
 
@@ -85,7 +103,8 @@ namespace mic {
          * 
          * @return The filled data buffer if available, error code otherwise.
          */
-        [[nodiscard]] std::expected<std::span<const uint32_t>, esp_err_t> get_free_buffer(uint32_t timeout_ms = portMAX_DELAY) const;
+        [[nodiscard]] std::expected<std::span<const int32_t, RECV_BUF_SIZE>, esp_err_t>
+        get_free_buffer(uint32_t timeout_ms = portMAX_DELAY) const;
 
     private:
         bool m_is_initialized{};
@@ -96,13 +115,18 @@ namespace mic {
         i2s_chan_handle_t m_handle{};
 
         // Buffers for storing samples
-        uint32_t* m_buf1{};
-        uint32_t* m_buf2{};
-        bool      m_is_buf1_filled{};
-        bool      m_is_buf2_filled{};
+        int32_t* m_buf1{};
+        int32_t* m_buf2{};
+        bool     m_is_buf1_filled{};
+        bool     m_is_buf2_filled{};
+
+        // Task which handles the streaming
+        TaskHandle_t m_streaming_task_handle{};
+        bool         m_shutdown_requested{};
 
         // Helpers
         [[nodiscard]] esp_err_t cleanup_resources();
+        void                    stream_task(void* arg);
     };
 
 } // namespace mic

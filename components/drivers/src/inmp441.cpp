@@ -21,9 +21,6 @@ namespace mic {
 
         m_config = config;
 
-        // The INMP441 requires around 90ms after startup to stabilize
-        vTaskDelay(pdMS_TO_TICKS(90));
-
         // Configure the CHIPEN and L/R pins
         const gpio_config_t io_conf = {
             .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.chip_en) | 1ULL << std::to_underlying(m_config.l_r)),
@@ -39,6 +36,9 @@ namespace mic {
             gpio_set_level(m_config.chip_en, true);
         }
 
+        // The INMP441 requires around 90ms after startup to stabilize
+        vTaskDelay(pdMS_TO_TICKS(90));
+
         // Set whether to use the right channel of the INMP441
         // HIGH on the l_r pin makes the INMP441 output on the right channel
         gpio_set_level(m_config.l_r, m_config.use_right_chan);
@@ -47,8 +47,8 @@ namespace mic {
         const i2s_chan_config_t chan_config = {
             .id                   = I2S_NUM_AUTO,
             .role                 = I2S_ROLE_MASTER,
-            .dma_desc_num         = 8,
-            .dma_frame_num        = 1024,
+            .dma_desc_num         = DMA_DESCR_NUM,
+            .dma_frame_num        = DMA_FRAME_NUM,
             .auto_clear_after_cb  = false, // Only used for TX
             .auto_clear_before_cb = false, // Only used for TX
             .allow_pd             = true,
@@ -82,7 +82,7 @@ namespace mic {
                     .ws_pol        = false, // WS should be low first, that is, data starts on the rising edge
                     .bit_shift     = true,  // Bit shift for Philips mode
                     .left_align    = false, // Left alignment is irrelevant here since slot size == data size
-                    .big_endian    = true,  // The INMP441 expects MSB first till the LSB as the last bit
+                    .big_endian    = false, // We don't want big endian
                     .bit_order_lsb = false, // LSB is not first
                 },
             .gpio_cfg =
@@ -103,10 +103,8 @@ namespace mic {
         TRY_WITH_FUNC(i2s_channel_init_std_mode(m_handle, &i2s_std_config), (void)cleanup_resources());
 
         // Allocate the buffers
-        m_buf1 = static_cast<uint32_t*>(
-            heap_caps_malloc(m_config.sample_buf_size_bytes, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
-        m_buf2 = static_cast<uint32_t*>(
-            heap_caps_malloc(m_config.sample_buf_size_bytes, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
+        m_buf1 = static_cast<int32_t*>(heap_caps_malloc(RECV_BUF_SIZE, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
+        m_buf2 = static_cast<int32_t*>(heap_caps_malloc(RECV_BUF_SIZE, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
 
         if (m_buf1 == nullptr || m_buf2 == nullptr) {
             (void)cleanup_resources();
@@ -156,9 +154,9 @@ namespace mic {
             return ESP_ERR_INVALID_STATE;
         }
 
-        // TODO: Handle streaming mode starting logic
-
+        // Set as true and wake the streaming task
         m_is_streaming = true;
+        xTaskNotifyGive(m_streaming_task_handle);
 
         return ESP_OK;
     }
@@ -168,21 +166,20 @@ namespace mic {
             return ESP_ERR_INVALID_STATE;
         }
 
-        // TODO: Handle streaming mode stopping logic
-
         m_is_streaming = false;
 
         return ESP_OK;
     }
 
-    std::expected<std::span<const uint32_t>, esp_err_t> inmp441_t::get_free_buffer(uint32_t timeout_ms) const {
+    std::expected<std::span<const int32_t, inmp441_t::RECV_BUF_SIZE>, esp_err_t> inmp441_t::get_free_buffer(uint32_t timeout_ms) const {
         if (!m_is_initialized) {
             return std::unexpected(ESP_ERR_INVALID_STATE);
         }
 
         // TODO: Handle buffer returning logic
+        int32_t* ptr{};
 
-        return {};
+        return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE>{ptr, inmp441_t::RECV_BUF_SIZE};
     }
 
     // Helpers
@@ -197,7 +194,9 @@ namespace mic {
 
         gpio_reset_pin(m_config.chip_en);
         gpio_reset_pin(m_config.l_r);
-        m_config = {};
+
+        m_config             = {};
+        m_shutdown_requested = true;
 
         if (m_handle) {
             TRY(i2s_del_channel(m_handle));
@@ -216,6 +215,24 @@ namespace mic {
         }
 
         return ESP_OK;
+    }
+
+    void inmp441_t::stream_task(void* arg) {
+        (void)arg;
+
+        while (!m_shutdown_requested) {
+            // Stream when requested. If set to false, sleep till a
+            // notification wakes the task up and resumes streaming
+            while (m_is_streaming) {
+
+                // TODO: Handle streaming logic
+            }
+
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        }
+
+        vTaskDelete(m_streaming_task_handle);
+        m_streaming_task_handle = nullptr;
     }
 
 } // namespace mic

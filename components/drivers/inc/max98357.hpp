@@ -15,11 +15,11 @@
 namespace amp {
 
     enum class gain_t : uint8_t {
-        dB_3,  // 3dB
-        dB_6,  // 6dB
-        dB_9,  // 9dB
-        dB_12, // 12dB
-        dB_15, // 15dB
+        dB_3  = 3,  // 3dB
+        dB_6  = 6,  // 6dB
+        dB_9  = 9,  // 9dB
+        dB_12 = 12, // 12dB
+        dB_15 = 15, // 15dB
     };
 
     enum class mode_t : uint8_t {
@@ -36,13 +36,30 @@ namespace amp {
         gpio_num_t sd{GPIO_NUM_NC};
     };
 
-    constexpr inline auto TAG{"MAX98357"};
-
-    constexpr inline auto SAMPLE_RATE_HZ{48'000UZ};
-
     template<gain_t gain, mode_t mode, bool use_gain_pin = true>
     class max98357a_t {
     public:
+        // Tag for identification in ESP_LOGx macros
+        constexpr static auto* TAG{"MAX98357A"};
+
+        // Sampling rate of the I2S channel
+        constexpr static size_t SAMPLE_RATE_HZ = 48'000;
+
+        // Hardware limit on the DMA buffer size
+        constexpr static size_t MAX_DMA_BUF_SIZE = 4092;
+
+        // Number of DMA descriptors being used
+        constexpr static size_t DMA_DESCR_NUM = 2;
+
+        // Slot per frame is 2 if in stereo mode, 1 if using any of the channels individually
+        constexpr static size_t SLOTS_PER_FRAME = mode == mode_t::STEREO ? 2 : 1;
+
+        // Frame size is (32 bits * slots per frame / 8) bytes
+        constexpr static size_t FRAME_SIZE = SLOTS_PER_FRAME * std::to_underlying(I2S_SLOT_BIT_WIDTH_32BIT) / 8;
+
+        // Number of frames inside the DMA buffer
+        constexpr static size_t DMA_FRAME_NUM = MAX_DMA_BUF_SIZE / FRAME_SIZE;
+
         max98357a_t() = default;
 
         ~max98357a_t() noexcept {
@@ -74,8 +91,8 @@ namespace amp {
             const i2s_chan_config_t chan_config = {
                 .id                   = I2S_NUM_AUTO,
                 .role                 = I2S_ROLE_MASTER,
-                .dma_desc_num         = 8,
-                .dma_frame_num        = 1024,
+                .dma_desc_num         = DMA_DESCR_NUM,
+                .dma_frame_num        = DMA_FRAME_NUM,
                 .auto_clear_after_cb  = false,
                 .auto_clear_before_cb = false,
                 .allow_pd             = true,
@@ -104,7 +121,7 @@ namespace amp {
                         .ws_pol        = false, // WS should be low first, that is, data starts on the rising edge
                         .bit_shift     = true,  // Bit shift for Philips mode
                         .left_align    = false, // Left alignment is irrelevant here since slot size == data size
-                        .big_endian    = true,  // The MAX98357 expects MSB first then the LSB as the last bit
+                        .big_endian    = false, // We don't want big endian
                         .bit_order_lsb = false, // LSB is not first
                     },
                 .gpio_cfg =
@@ -242,12 +259,12 @@ namespace amp {
          * 
          * @return ESP_OK if data sent successfully, error code otherwise.
          */
-        [[nodiscard]] esp_err_t send_audio_buf(std::span<const uint32_t> data, uint32_t timeout_ms = portMAX_DELAY) {
+        [[nodiscard]] esp_err_t send_audio_buf(std::span<const int32_t> data, uint32_t timeout_ms = portMAX_DELAY) {
             if (!m_is_initialized || !m_is_on) {
                 return ESP_ERR_INVALID_STATE;
             }
 
-            const auto bytes_to_send = data.size() * sizeof(uint32_t);
+            const auto bytes_to_send = data.size() * sizeof(int32_t);
             size_t     num_of_bytes_sent{};
 
             TRY(i2s_channel_write(m_handle, data.data(), bytes_to_send, &num_of_bytes_sent, timeout_ms));

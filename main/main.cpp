@@ -58,7 +58,36 @@ namespace {
 
     [[noreturn]] void audio_task(void* arg) {
         (void)arg;
+
+        // Initialize the MAX98357A audio amplifier
+        constexpr amp::config_t max_config = {
+            .bclk = config::MAX_BCLK,
+            .data = config::MAX_DATA,
+            .gain = config::MAX_GAIN,
+            .ws   = config::MAX_WS,
+            .sd   = config::MAX_SD,
+        };
+
+        amp::max98357a_t<amp::gain_t::dB_12, amp::mode_t::LEFT_CHANNEL> max98357;
+        ESP_ERROR_CHECK(max98357.init(max_config));
+        ESP_ERROR_CHECK(max98357.power_on());
+
+        // Initialize the INMP441 microphone
+        constexpr mic::config_t inmp_config = {
+            .use_right_chan     = false,
+            .enable_during_init = true,
+            .chip_en            = config::INMP_CHIPEN,
+            .bclk               = config::INMP_BCLK,
+            .data               = config::INMP_DATA,
+            .l_r                = config::INMP_L_R,
+            .ws                 = config::INMP_WS,
+        };
+
+        mic::inmp441_t inmp441;
+        ESP_ERROR_CHECK(inmp441.init(inmp_config));
+
         while (true) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
 
