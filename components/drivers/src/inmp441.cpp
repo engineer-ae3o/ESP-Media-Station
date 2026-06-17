@@ -112,7 +112,8 @@ namespace mic {
         }
 
         // Create background streaming task
-        auto ret = xTaskCreate(stream_task, "INMP stream task", 2048, this, 1, &m_streaming_task_handle);
+        auto ret =
+            xTaskCreate(stream_task, "INMP stream task", STREAM_TASK_STACK_SIZE, this, STREAM_TASK_PRIORITY, &m_streaming_task_handle);
         if (ret != pdPASS || m_streaming_task_handle == nullptr) {
             (void)cleanup_resources();
             return ESP_ERR_NO_MEM;
@@ -187,7 +188,8 @@ namespace mic {
         return ESP_OK;
     }
 
-    std::expected<std::span<const int32_t, inmp441_t::RECV_BUF_SIZE>, esp_err_t> inmp441_t::get_free_buffer(uint32_t timeout_ms) {
+    std::expected<std::span<const int32_t, (inmp441_t::RECV_BUF_SIZE / sizeof(int32_t))>, esp_err_t>
+    inmp441_t::get_free_buffer(uint32_t timeout_ms) {
         if (!m_is_initialized) {
             return std::unexpected(ESP_ERR_INVALID_STATE);
         }
@@ -215,7 +217,7 @@ namespace mic {
             return std::unexpected(ESP_ERR_NOT_FOUND);
         }
 
-        return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE>{free_buf, inmp441_t::RECV_BUF_SIZE};
+        return std::span<const int32_t, (inmp441_t::RECV_BUF_SIZE / sizeof(int32_t))>{free_buf, inmp441_t::RECV_BUF_SIZE};
     }
 
     esp_err_t inmp441_t::return_buffer(const int32_t* buf) {
@@ -303,19 +305,95 @@ namespace mic {
     }
 
     // State helpers
-    void inmp441_t::check_buf1(inmp441_t* driver, state_t& state) {
+    void inmp441_t::state_check_buf1(inmp441_t* driver, state_t& state) {
+        if (!driver->m_is_streaming) {
+            state = state_t::SLEEPING;
+            return;
+        }
+
+        // Check if the first buffer is being used
+        auto ret = xSemaphoreTake(driver->m_buf1_mutex, pdMS_TO_TICKS(STREAM_TASK_TIMEOUT_MS));
+        if (ret != pdTRUE) {
+            // If it's being used, switch to checking and writing to buffer 2
+            state = state_t::CHECKING_BUF2;
+            return;
+        }
+
+        // If buffer 1 is not being read from at the moment, start writing data to it
+        state = state_t::WRITING_BUF1;
     }
 
-    void inmp441_t::check_buf2(inmp441_t* driver, state_t& state) {
+    void inmp441_t::state_check_buf2(inmp441_t* driver, state_t& state) {
+        if (!driver->m_is_streaming) {
+            state = state_t::SLEEPING;
+            return;
+        }
+
+        // Check if the second buffer is being used
+        auto ret = xSemaphoreTake(driver->m_buf2_mutex, pdMS_TO_TICKS(STREAM_TASK_TIMEOUT_MS));
+        if (ret != pdTRUE) {
+            // If it's being used, switch to checking and writing to buffer 1
+            state = state_t::CHECKING_BUF1;
+            return;
+        }
+
+        // If buffer 2 is not being read from at the moment, start writing data to it
+        state = state_t::WRITING_BUF2;
     }
 
-    void inmp441_t::writing_buf1(inmp441_t* driver, state_t& state) {
+    void inmp441_t::state_writing_buf1(inmp441_t* driver, state_t& state) {
+        if (!driver->m_is_streaming) {
+            state = state_t::SLEEPING;
+            xSemaphoreGive(driver->m_buf1_mutex);
+            return;
+        }
+
+        for (uint8_t i{}; i < MAX_RETRIES_ON_ERROR; i++) {
+            size_t num_of_bytes_read{};
+            auto   ret = i2s_channel_read(driver->m_handle, driver->m_buf1, RECV_BUF_SIZE, &num_of_bytes_read, STREAM_TASK_TIMEOUT_MS);
+            if (ret == ESP_OK && num_of_bytes_read == RECV_BUF_SIZE) {
+                // No errors: We check and try to write to buffer 2 next
+                state                    = state_t::CHECKING_BUF2;
+                driver->m_is_buf1_filled = true;
+                xSemaphoreGive(driver->m_buf1_mutex);
+                return;
+            }
+        }
+
+        // All read attempts failed
+        driver->m_config.error_cb(ESP_ERR_NOT_FINISHED);
+        xSemaphoreGive(driver->m_buf1_mutex);
     }
 
-    void inmp441_t::writing_buf2(inmp441_t* driver, state_t& state) {
+    void inmp441_t::state_writing_buf2(inmp441_t* driver, state_t& state) {
+        if (!driver->m_is_streaming) {
+            state = state_t::SLEEPING;
+            xSemaphoreGive(driver->m_buf2_mutex);
+            return;
+        }
+
+        for (uint8_t i{}; i < MAX_RETRIES_ON_ERROR; i++) {
+            size_t num_of_bytes_read{};
+            auto   ret = i2s_channel_read(driver->m_handle, driver->m_buf2, RECV_BUF_SIZE, &num_of_bytes_read, STREAM_TASK_TIMEOUT_MS);
+            if (ret == ESP_OK && num_of_bytes_read == RECV_BUF_SIZE) {
+                // No errors: We check and try to write to buffer 1 next
+                state                    = state_t::CHECKING_BUF1;
+                driver->m_is_buf1_filled = true;
+                xSemaphoreGive(driver->m_buf2_mutex);
+                return;
+            }
+        }
+
+        // All read attempts failed
+        driver->m_config.error_cb(ESP_ERR_NOT_FINISHED);
+        xSemaphoreGive(driver->m_buf2_mutex);
     }
 
-    void inmp441_t::sleeping(inmp441_t* driver, state_t& state) {
+    void inmp441_t::state_sleeping(inmp441_t* driver, state_t& state) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (driver->m_is_streaming) {
+            state = state_t::CHECKING_BUF1;
+        }
     }
 
 } // namespace mic

@@ -23,6 +23,8 @@ namespace mic {
         gpio_num_t data{GPIO_NUM_NC};
         gpio_num_t l_r{GPIO_NUM_NC};
         gpio_num_t ws{GPIO_NUM_NC};
+
+        void (*error_cb)(esp_err_t error);
     };
 
     class inmp441_t {
@@ -50,7 +52,11 @@ namespace mic {
         // frames, the DMA descriptor number and size of a frame
         constexpr static size_t RECV_BUF_SIZE = DMA_FRAME_NUM * DMA_DESCR_NUM * FRAME_SIZE;
 
+        // Used by the streaming task
         constexpr static size_t STREAM_TASK_TIMEOUT_MS = 50;
+        constexpr static size_t MAX_RETRIES_ON_ERROR   = 5;
+        constexpr static size_t STREAM_TASK_STACK_SIZE = 2048;
+        constexpr static size_t STREAM_TASK_PRIORITY   = 1;
 
         inmp441_t() = default;
         ~inmp441_t() noexcept;
@@ -106,14 +112,19 @@ namespace mic {
          * @param timeout_ms Timeout in miliseconds for waiting for the buffer.
          * 
          * @return The filled data buffer if available, error code otherwise.
+         * 
+         * @note If the buffers aren't read on time, they get overwritten with new data.
          */
-        [[nodiscard]] std::expected<std::span<const int32_t, RECV_BUF_SIZE>, esp_err_t>
+        [[nodiscard]] std::expected<std::span<const int32_t, (RECV_BUF_SIZE / sizeof(int32_t))>, esp_err_t>
         get_free_buffer(uint32_t timeout_ms = portMAX_DELAY);
 
         /**
          * @brief Returns a buffer previously taken.
          * 
          * @return ESP_OK if the buffer is valid and was returned successfully, error code otherwise.
+         * 
+         * @note Not returning the buffer on time causes the driver to continuously write data to the
+         *       other buffer.
          */
         [[nodiscard]] esp_err_t return_buffer(const int32_t* buf);
 
@@ -153,18 +164,18 @@ namespace mic {
         };
 
         // State helpers
-        static void check_buf1(inmp441_t* driver, state_t& state);
-        static void check_buf2(inmp441_t* driver, state_t& state);
-        static void writing_buf1(inmp441_t* driver, state_t& state);
-        static void writing_buf2(inmp441_t* driver, state_t& state);
-        static void sleeping(inmp441_t* driver, state_t& state);
+        static void state_check_buf1(inmp441_t* driver, state_t& state);
+        static void state_check_buf2(inmp441_t* driver, state_t& state);
+        static void state_writing_buf1(inmp441_t* driver, state_t& state);
+        static void state_writing_buf2(inmp441_t* driver, state_t& state);
+        static void state_sleeping(inmp441_t* driver, state_t& state);
 
         constexpr static std::array<void (*)(inmp441_t*, state_t&), std::to_underlying(state_t::COUNT)> STATE_LUT = {{
-            [std::to_underlying(state_t::CHECKING_BUF1)] = check_buf1,
-            [std::to_underlying(state_t::CHECKING_BUF2)] = check_buf2,
-            [std::to_underlying(state_t::WRITING_BUF1)]  = writing_buf1,
-            [std::to_underlying(state_t::WRITING_BUF2)]  = writing_buf2,
-            [std::to_underlying(state_t::SLEEPING)]      = sleeping,
+            [std::to_underlying(state_t::CHECKING_BUF1)] = state_check_buf1,
+            [std::to_underlying(state_t::CHECKING_BUF2)] = state_check_buf2,
+            [std::to_underlying(state_t::WRITING_BUF1)]  = state_writing_buf1,
+            [std::to_underlying(state_t::WRITING_BUF2)]  = state_writing_buf2,
+            [std::to_underlying(state_t::SLEEPING)]      = state_sleeping,
         }};
     };
 
