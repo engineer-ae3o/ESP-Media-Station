@@ -111,6 +111,22 @@ namespace mic {
             return ESP_ERR_NO_MEM;
         }
 
+        // Create background streaming task
+        auto ret = xTaskCreate(stream_task, "INMP stream task", 2048, this, 1, &m_streaming_task_handle);
+        if (ret != pdPASS || m_streaming_task_handle == nullptr) {
+            (void)cleanup_resources();
+            return ESP_ERR_NO_MEM;
+        }
+
+        // Mutexes to serialize access to the buffers
+        m_buf1_mutex = xSemaphoreCreateMutex();
+        m_buf2_mutex = xSemaphoreCreateMutex();
+
+        if (m_buf1_mutex == nullptr || m_buf2_mutex == nullptr) {
+            (void)cleanup_resources();
+            return ESP_ERR_NO_MEM;
+        }
+
         m_is_initialized = true;
         m_is_enabled     = m_config.enable_during_init;
 
@@ -171,15 +187,55 @@ namespace mic {
         return ESP_OK;
     }
 
-    std::expected<std::span<const int32_t, inmp441_t::RECV_BUF_SIZE>, esp_err_t> inmp441_t::get_free_buffer(uint32_t timeout_ms) const {
+    std::expected<std::span<const int32_t, inmp441_t::RECV_BUF_SIZE>, esp_err_t> inmp441_t::get_free_buffer(uint32_t timeout_ms) {
         if (!m_is_initialized) {
             return std::unexpected(ESP_ERR_INVALID_STATE);
         }
 
-        // TODO: Handle buffer returning logic
-        int32_t* ptr{};
+        int32_t* free_buf{};
 
-        return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE>{ptr, inmp441_t::RECV_BUF_SIZE};
+        // Check if the first buffer is filled and is not being used by the stream task
+        if (m_is_buf1_filled) {
+            auto ret = xSemaphoreTake(m_buf1_mutex, pdMS_TO_TICKS(timeout_ms));
+            if (ret != pdTRUE) {
+                return std::unexpected(ESP_ERR_TIMEOUT);
+            }
+            free_buf = m_buf1;
+        }
+        // Similarly, check if the second buffer is filled and is not also being used by the stream task
+        else if (m_is_buf2_filled) {
+            auto ret = xSemaphoreTake(m_buf2_mutex, pdMS_TO_TICKS(timeout_ms));
+            if (ret != pdTRUE) {
+                return std::unexpected(ESP_ERR_TIMEOUT);
+            }
+            free_buf = m_buf2;
+        }
+        // Return an error not found if no buffer is filled
+        else {
+            return std::unexpected(ESP_ERR_NOT_FOUND);
+        }
+
+        return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE>{free_buf, inmp441_t::RECV_BUF_SIZE};
+    }
+
+    esp_err_t inmp441_t::return_buffer(const int32_t* buf) {
+        if (!m_is_initialized) {
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        if (buf == m_buf1 && m_is_buf1_filled) {
+            m_is_buf1_filled = false;
+            xSemaphoreGive(m_buf1_mutex);
+
+        } else if (buf == m_buf2 && m_is_buf2_filled) {
+            m_is_buf2_filled = false;
+            xSemaphoreGive(m_buf2_mutex);
+
+        } else {
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        return ESP_OK;
     }
 
     // Helpers
@@ -189,7 +245,8 @@ namespace mic {
             // Disable the I2S channel before we disable the INMP441
             TRY(i2s_channel_disable(m_handle));
             gpio_set_level(m_config.chip_en, 0);
-            m_is_enabled = false;
+            m_is_streaming = false;
+            m_is_enabled   = false;
         }
 
         gpio_reset_pin(m_config.chip_en);
@@ -200,39 +257,65 @@ namespace mic {
 
         if (m_handle) {
             TRY(i2s_del_channel(m_handle));
-            m_handle       = nullptr;
-            m_is_streaming = false;
+            m_handle = nullptr;
         }
 
         if (m_buf1) {
             heap_caps_free(m_buf1);
-            m_buf1 = nullptr;
+            m_buf1           = nullptr;
+            m_is_buf1_filled = false;
         }
 
         if (m_buf2) {
             heap_caps_free(m_buf2);
-            m_buf2 = nullptr;
+            m_buf2           = nullptr;
+            m_is_buf2_filled = false;
         }
 
+        m_is_initialized = false;
         return ESP_OK;
     }
 
     void inmp441_t::stream_task(void* arg) {
-        (void)arg;
 
-        while (!m_shutdown_requested) {
-            // Stream when requested. If set to false, sleep till a
-            // notification wakes the task up and resumes streaming
-            while (m_is_streaming) {
+        auto* driver = static_cast<inmp441_t*>(arg);
+        auto  state  = state_t::CHECKING_BUF1;
 
-                // TODO: Handle streaming logic
-            }
-
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        while (!driver->m_shutdown_requested) {
+            STATE_LUT[std::to_underlying(state)](driver, state);
         }
 
-        vTaskDelete(m_streaming_task_handle);
-        m_streaming_task_handle = nullptr;
+        // Cleanup used resources if a shutdown was requested
+        if (driver->m_buf1_mutex) {
+            vSemaphoreDelete(driver->m_buf1_mutex);
+            driver->m_buf1_mutex = nullptr;
+        }
+
+        if (driver->m_buf2_mutex) {
+            vSemaphoreDelete(driver->m_buf2_mutex);
+            driver->m_buf2_mutex = nullptr;
+        }
+
+        if (driver->m_streaming_task_handle) {
+            vTaskDelete(driver->m_streaming_task_handle);
+            driver->m_streaming_task_handle = nullptr;
+        }
+    }
+
+    // State helpers
+    void inmp441_t::check_buf1(inmp441_t* driver, state_t& state) {
+    }
+
+    void inmp441_t::check_buf2(inmp441_t* driver, state_t& state) {
+    }
+
+    void inmp441_t::writing_buf1(inmp441_t* driver, state_t& state) {
+    }
+
+    void inmp441_t::writing_buf2(inmp441_t* driver, state_t& state) {
+    }
+
+    void inmp441_t::sleeping(inmp441_t* driver, state_t& state) {
     }
 
 } // namespace mic

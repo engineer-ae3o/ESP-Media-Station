@@ -5,8 +5,10 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #include <span>
+#include <array>
 #include <utility>
 #include <expected>
 
@@ -47,6 +49,8 @@ namespace mic {
         // Size of our receiving buffer: Gotten from the number of DMA
         // frames, the DMA descriptor number and size of a frame
         constexpr static size_t RECV_BUF_SIZE = DMA_FRAME_NUM * DMA_DESCR_NUM * FRAME_SIZE;
+
+        constexpr static size_t STREAM_TASK_TIMEOUT_MS = 50;
 
         inmp441_t() = default;
         ~inmp441_t() noexcept;
@@ -92,7 +96,7 @@ namespace mic {
         /**
          * @brief Stops filling the buffers with data.
          * 
-         * @return ESP_OK if data data stopped streaming successfully, error code otherwise.
+         * @return ESP_OK if data stopped streaming successfully, error code otherwise.
          */
         [[nodiscard]] esp_err_t stop_stream();
 
@@ -104,7 +108,14 @@ namespace mic {
          * @return The filled data buffer if available, error code otherwise.
          */
         [[nodiscard]] std::expected<std::span<const int32_t, RECV_BUF_SIZE>, esp_err_t>
-        get_free_buffer(uint32_t timeout_ms = portMAX_DELAY) const;
+        get_free_buffer(uint32_t timeout_ms = portMAX_DELAY);
+
+        /**
+         * @brief Returns a buffer previously taken.
+         * 
+         * @return ESP_OK if the buffer is valid and was returned successfully, error code otherwise.
+         */
+        [[nodiscard]] esp_err_t return_buffer(const int32_t* buf);
 
     private:
         bool m_is_initialized{};
@@ -117,8 +128,12 @@ namespace mic {
         // Buffers for storing samples
         int32_t* m_buf1{};
         int32_t* m_buf2{};
-        bool     m_is_buf1_filled{};
-        bool     m_is_buf2_filled{};
+
+        bool m_is_buf1_filled{};
+        bool m_is_buf2_filled{};
+
+        SemaphoreHandle_t m_buf1_mutex{};
+        SemaphoreHandle_t m_buf2_mutex{};
 
         // Task which handles the streaming
         TaskHandle_t m_streaming_task_handle{};
@@ -126,7 +141,31 @@ namespace mic {
 
         // Helpers
         [[nodiscard]] esp_err_t cleanup_resources();
-        void                    stream_task(void* arg);
+        static void             stream_task(void* arg);
+
+        enum class state_t : uint8_t {
+            CHECKING_BUF1,
+            CHECKING_BUF2,
+            WRITING_BUF1,
+            WRITING_BUF2,
+            SLEEPING,
+            COUNT,
+        };
+
+        // State helpers
+        static void check_buf1(inmp441_t* driver, state_t& state);
+        static void check_buf2(inmp441_t* driver, state_t& state);
+        static void writing_buf1(inmp441_t* driver, state_t& state);
+        static void writing_buf2(inmp441_t* driver, state_t& state);
+        static void sleeping(inmp441_t* driver, state_t& state);
+
+        constexpr static std::array<void (*)(inmp441_t*, state_t&), std::to_underlying(state_t::COUNT)> STATE_LUT = {{
+            [std::to_underlying(state_t::CHECKING_BUF1)] = check_buf1,
+            [std::to_underlying(state_t::CHECKING_BUF2)] = check_buf2,
+            [std::to_underlying(state_t::WRITING_BUF1)]  = writing_buf1,
+            [std::to_underlying(state_t::WRITING_BUF2)]  = writing_buf2,
+            [std::to_underlying(state_t::SLEEPING)]      = sleeping,
+        }};
     };
 
 } // namespace mic
