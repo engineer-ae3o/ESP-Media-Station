@@ -17,6 +17,9 @@ namespace mic {
             m_deinit_task_handle = xTaskGetCurrentTaskHandle();
             m_shutdown_requested = true;
 
+            // Unblock the streaming task if it were previously sleeping
+            xTaskNotifyGive(m_streaming_task_handle);
+
             // Block till the streaming task notifies us that its done with cleanup
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         }
@@ -139,6 +142,9 @@ namespace mic {
 
         m_deinit_task_handle = xTaskGetCurrentTaskHandle();
         m_shutdown_requested = true;
+
+        // Unblock the streaming task if it were previously sleeping
+        xTaskNotifyGive(m_streaming_task_handle);
 
         // Block till the streaming task notifies us that its done with cleanup
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -313,8 +319,8 @@ namespace mic {
         // Send a notification to the task that requested
         // the deinitialization so it can safely procede.
         if (driver.m_deinit_task_handle) {
-            xTaskNotifyGive(driver.m_deinit_task_handle);
             driver.m_deinit_task_handle = nullptr;
+            xTaskNotifyGive(driver.m_deinit_task_handle);
         }
 
         vTaskDelete(nullptr);
