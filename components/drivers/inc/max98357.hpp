@@ -3,6 +3,7 @@
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 
+#include "esp_err.h"
 #include "utils.hpp"
 
 #include "freertos/FreeRTOS.h"
@@ -195,8 +196,12 @@ namespace amp {
          *
          * @return ESP_OK on success, error code otherwise.
          */
-        [[nodiscard]] esp_err_t power_on(bool power_on = true) {
-            if (power_on) {
+        [[nodiscard]] esp_err_t power_on(bool on = true) {
+            if (m_is_on == on) {
+                return ESP_ERR_INVALID_STATE;
+            }
+
+            if (on) {
                 if constexpr (mode == mode_t::LEFT_CHANNEL) {
                     // For the MAX98357, if we want to use the left channel, we don't have to connect any
                     // external resistors. Instead, we just drive the pin HIGH dircetly to enable it.
@@ -246,7 +251,8 @@ namespace amp {
                 gpio_set_level(m_config.sd, 0);
                 TRY(i2s_channel_disable(m_handle));
             }
-            m_is_on = power_on;
+
+            m_is_on = on;
 
             return ESP_OK;
         }
@@ -264,12 +270,10 @@ namespace amp {
                 return ESP_ERR_INVALID_STATE;
             }
 
-            const auto bytes_to_send = data.size() * sizeof(int32_t);
-            size_t     num_of_bytes_sent{};
-
-            TRY(i2s_channel_write(m_handle, data.data(), bytes_to_send, &num_of_bytes_sent, timeout_ms));
-            if (num_of_bytes_sent != bytes_to_send) {
-                ESP_LOGE(TAG, "Error transmitting audio buffer. Only %zu bytes of %zu bytes sent", num_of_bytes_sent, bytes_to_send);
+            size_t num_of_bytes_sent{};
+            TRY(i2s_channel_write(m_handle, data.data(), data.size_bytes(), &num_of_bytes_sent, timeout_ms));
+            if (num_of_bytes_sent != data.size_bytes()) {
+                ESP_LOGE(TAG, "Error transmitting audio buffer. Only %zu bytes of %zu bytes sent", num_of_bytes_sent, data.size_bytes());
                 return ESP_ERR_TIMEOUT;
             }
 
@@ -285,22 +289,47 @@ namespace amp {
 
         // Helpers
         [[nodiscard]] esp_err_t cleanup_resources() {
-            if constexpr (use_gain_pin) {
-                TRY(gpio_reset_pin(m_config.gain));
-            }
+            esp_err_t ret{ESP_OK};
 
             if (m_is_on) {
-                TRY(power_on(false));
+                auto err_ret = power_on(false);
+                if (err_ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Error powering down the MAX98357: %s", esp_err_to_name(err_ret));
+                    ret = err_ret;
+                } else {
+                    m_is_on = false;
+                }
             }
-            TRY(gpio_reset_pin(m_config.sd));
 
             if (m_handle) {
-                TRY(i2s_del_channel(m_handle));
+                auto err_ret = i2s_del_channel(m_handle);
+                if (err_ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Error deleting the I2S channel: %s", esp_err_to_name(err_ret));
+                    ret = err_ret;
+                }
                 m_handle = nullptr;
             }
 
+            {
+                auto err_ret = gpio_reset_pin(m_config.sd);
+                if (err_ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Error resetting the SD pin: %s", esp_err_to_name(err_ret));
+                    ret = err_ret;
+                }
+            }
+
+            if constexpr (use_gain_pin) {
+                auto err_ret = gpio_reset_pin(m_config.gain);
+                if (err_ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Error resetting gain pin: %s", esp_err_to_name(err_ret));
+                    ret = err_ret;
+                }
+            }
+
             m_config = {};
-            return ESP_OK;
+
+            // return the final error
+            return ret;
         }
     };
 

@@ -9,6 +9,7 @@
 
 #include <span>
 #include <array>
+#include <atomic>
 #include <utility>
 #include <expected>
 
@@ -16,15 +17,13 @@ namespace mic {
 
     struct config_t {
         bool use_right_chan{};
-        bool enable_during_init{};
+        void (*error_cb)(esp_err_t error){};
 
         gpio_num_t chip_en{GPIO_NUM_NC};
         gpio_num_t bclk{GPIO_NUM_NC};
         gpio_num_t data{GPIO_NUM_NC};
         gpio_num_t l_r{GPIO_NUM_NC};
         gpio_num_t ws{GPIO_NUM_NC};
-
-        void (*error_cb)(esp_err_t error);
     };
 
     class inmp441_t {
@@ -50,7 +49,8 @@ namespace mic {
 
         // Size of our receiving buffer: Gotten from the number of DMA
         // frames, the DMA descriptor number and size of a frame
-        constexpr static size_t RECV_BUF_SIZE = DMA_FRAME_NUM * DMA_DESCR_NUM * FRAME_SIZE;
+        constexpr static size_t RECV_BUF_SIZE_BYTES    = DMA_FRAME_NUM * DMA_DESCR_NUM * FRAME_SIZE;
+        constexpr static size_t RECV_BUF_SIZE_ELEMENTS = RECV_BUF_SIZE_BYTES / sizeof(int32_t);
 
         // Used by the streaming task
         constexpr static size_t STREAM_TASK_TIMEOUT_MS = 50;
@@ -115,8 +115,8 @@ namespace mic {
          * 
          * @note If the buffers aren't read on time, they get overwritten with new data.
          */
-        [[nodiscard]] std::expected<std::span<const int32_t, (RECV_BUF_SIZE / sizeof(int32_t))>, esp_err_t>
-        get_free_buffer(uint32_t timeout_ms = portMAX_DELAY);
+        [[nodiscard]] std::expected<std::span<const int32_t, RECV_BUF_SIZE_ELEMENTS>, esp_err_t>
+        get_filled_buffer(uint32_t timeout_ms = portMAX_DELAY);
 
         /**
          * @brief Returns a buffer previously taken.
@@ -129,9 +129,9 @@ namespace mic {
         [[nodiscard]] esp_err_t return_buffer(const int32_t* buf);
 
     private:
-        bool m_is_initialized{};
-        bool m_is_enabled{};
-        bool m_is_streaming{};
+        std::atomic<bool> m_is_initialized;
+        std::atomic<bool> m_is_enabled;
+        std::atomic<bool> m_is_streaming;
 
         config_t          m_config{};
         i2s_chan_handle_t m_handle{};
@@ -140,15 +140,15 @@ namespace mic {
         int32_t* m_buf1{};
         int32_t* m_buf2{};
 
-        bool m_is_buf1_filled{};
-        bool m_is_buf2_filled{};
+        std::atomic<bool> m_is_buf1_filled;
+        std::atomic<bool> m_is_buf2_filled;
 
         SemaphoreHandle_t m_buf1_mutex{};
         SemaphoreHandle_t m_buf2_mutex{};
 
         // Task which handles the streaming
-        TaskHandle_t m_streaming_task_handle{};
-        bool         m_shutdown_requested{};
+        TaskHandle_t      m_streaming_task_handle{};
+        std::atomic<bool> m_shutdown_requested;
 
         // Helpers
         [[nodiscard]] esp_err_t cleanup_resources();
@@ -164,13 +164,13 @@ namespace mic {
         };
 
         // State helpers
-        static void state_check_buf1(inmp441_t* driver, state_t& state);
-        static void state_check_buf2(inmp441_t* driver, state_t& state);
-        static void state_writing_buf1(inmp441_t* driver, state_t& state);
-        static void state_writing_buf2(inmp441_t* driver, state_t& state);
-        static void state_sleeping(inmp441_t* driver, state_t& state);
+        static void state_check_buf1(inmp441_t& driver, state_t& state);
+        static void state_check_buf2(inmp441_t& driver, state_t& state);
+        static void state_writing_buf1(inmp441_t& driver, state_t& state);
+        static void state_writing_buf2(inmp441_t& driver, state_t& state);
+        static void state_sleeping(inmp441_t& driver, state_t& state);
 
-        constexpr static std::array<void (*)(inmp441_t*, state_t&), std::to_underlying(state_t::COUNT)> STATE_LUT = {{
+        constexpr static std::array<void (*)(inmp441_t&, state_t&), std::to_underlying(state_t::COUNT)> STATE_LUT = {{
             [std::to_underlying(state_t::CHECKING_BUF1)] = state_check_buf1,
             [std::to_underlying(state_t::CHECKING_BUF2)] = state_check_buf2,
             [std::to_underlying(state_t::WRITING_BUF1)]  = state_writing_buf1,

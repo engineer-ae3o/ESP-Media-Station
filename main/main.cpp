@@ -74,13 +74,13 @@ namespace {
 
         // Initialize the INMP441 microphone
         constexpr mic::config_t inmp_config = {
-            .use_right_chan     = false,
-            .enable_during_init = true,
-            .chip_en            = config::INMP_CHIPEN,
-            .bclk               = config::INMP_BCLK,
-            .data               = config::INMP_DATA,
-            .l_r                = config::INMP_L_R,
-            .ws                 = config::INMP_WS,
+            .use_right_chan = false,
+            .error_cb       = nullptr,
+            .chip_en        = config::INMP_CHIPEN,
+            .bclk           = config::INMP_BCLK,
+            .data           = config::INMP_DATA,
+            .l_r            = config::INMP_L_R,
+            .ws             = config::INMP_WS,
         };
 
         mic::inmp441_t inmp441;
