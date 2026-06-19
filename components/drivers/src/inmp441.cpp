@@ -1,5 +1,8 @@
 #include "inmp441.hpp"
 #include "esp_err.h"
+#include "freertos/idf_additions.h"
+#include "freertos/projdefs.h"
+#include "portmacro.h"
 #include "utils.hpp"
 
 #include "esp_heap_caps.h"
@@ -11,7 +14,11 @@ namespace mic {
 
     inmp441_t::~inmp441_t() noexcept {
         if (m_is_initialized) {
+            m_deinit_task_handle = xTaskGetCurrentTaskHandle();
             m_shutdown_requested = true;
+
+            // Block till the streaming task notifies us that its done with cleanup
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         }
     }
 
@@ -112,15 +119,6 @@ namespace mic {
             return ESP_ERR_NO_MEM;
         }
 
-        // Mutexes to serialize access to the buffers
-        m_buf1_mutex = xSemaphoreCreateMutex();
-        m_buf2_mutex = xSemaphoreCreateMutex();
-
-        if (m_buf1_mutex == nullptr || m_buf2_mutex == nullptr) {
-            m_shutdown_requested = true;
-            return ESP_ERR_NO_MEM;
-        }
-
         // Enable the INMP441 with the CHIPEN pin
         gpio_set_level(m_config.chip_en, 1);
         TRY_WITH_FUNC(i2s_channel_enable(m_handle), m_shutdown_requested = true);
@@ -139,7 +137,12 @@ namespace mic {
             return ESP_ERR_INVALID_STATE;
         }
 
-        TRY(cleanup_resources());
+        m_deinit_task_handle = xTaskGetCurrentTaskHandle();
+        m_shutdown_requested = true;
+
+        // Block till the streaming task notifies us that its done with cleanup
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
         m_is_initialized = false;
 
         return ESP_OK;
@@ -188,36 +191,24 @@ namespace mic {
         return ESP_OK;
     }
 
-    std::expected<std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>, esp_err_t>
-    inmp441_t::get_filled_buffer(uint32_t timeout_ms) {
+    std::expected<std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>, esp_err_t> inmp441_t::get_filled_buffer() {
         if (!m_is_initialized) {
             return std::unexpected(ESP_ERR_INVALID_STATE);
         }
 
-        int32_t* free_buf{};
-
         // Check if the first buffer is filled and is not being used by the stream task
-        if (m_is_buf1_filled) {
-            auto ret = xSemaphoreTake(m_buf1_mutex, pdMS_TO_TICKS(timeout_ms));
-            if (ret != pdTRUE) {
-                return std::unexpected(ESP_ERR_TIMEOUT);
-            }
-            free_buf = m_buf1;
-        }
-        // Similarly, check if the second buffer is filled and is not also being used by the stream task
-        else if (m_is_buf2_filled) {
-            auto ret = xSemaphoreTake(m_buf2_mutex, pdMS_TO_TICKS(timeout_ms));
-            if (ret != pdTRUE) {
-                return std::unexpected(ESP_ERR_TIMEOUT);
-            }
-            free_buf = m_buf2;
-        }
-        // Return an error not found if no buffer is filled
-        else {
-            return std::unexpected(ESP_ERR_NOT_FOUND);
+        if (m_is_buf1_filled && !m_is_buf1_in_use) {
+            m_is_buf1_in_use = true;
+            return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>{m_buf1, inmp441_t::RECV_BUF_SIZE_ELEMENTS};
         }
 
-        return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>{free_buf, inmp441_t::RECV_BUF_SIZE_ELEMENTS};
+        // Similarly, check if the second buffer is filled and is not also being used by the stream task
+        if (m_is_buf2_filled && !m_is_buf2_in_use) {
+            m_is_buf2_in_use = true;
+            return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>{m_buf2, inmp441_t::RECV_BUF_SIZE_ELEMENTS};
+        }
+
+        return std::unexpected(ESP_ERR_NOT_FOUND);
     }
 
     esp_err_t inmp441_t::return_buffer(const int32_t* buf) {
@@ -225,31 +216,29 @@ namespace mic {
             return ESP_ERR_INVALID_STATE;
         }
 
-        if (buf == m_buf1 && m_is_buf1_filled) {
+        if (buf == m_buf1 && m_is_buf1_filled && m_is_buf1_in_use) {
+            m_is_buf1_in_use = false;
             m_is_buf1_filled = false;
-            xSemaphoreGive(m_buf1_mutex);
-
-        } else if (buf == m_buf2 && m_is_buf2_filled) {
-            m_is_buf2_filled = false;
-            xSemaphoreGive(m_buf2_mutex);
-
-        } else {
-            return ESP_ERR_INVALID_ARG;
+            return ESP_OK;
         }
 
-        return ESP_OK;
+        if (buf == m_buf2 && m_is_buf2_filled && m_is_buf2_in_use) {
+            m_is_buf2_in_use = false;
+            m_is_buf2_filled = false;
+            return ESP_OK;
+        }
+
+        return ESP_ERR_INVALID_ARG;
     }
 
     // Helpers
     esp_err_t inmp441_t::cleanup_resources() {
         esp_err_t ret{ESP_OK};
-
-        // Disable the INMP441 before cleaning any resources
-        m_is_streaming = false;
+        esp_err_t err_ret{ESP_OK};
 
         if (m_is_enabled) {
             // Disable the I2S channel before we disable the INMP441
-            auto err_ret = i2s_channel_disable(m_handle);
+            err_ret = i2s_channel_disable(m_handle);
             if (err_ret != ESP_OK) {
                 ESP_LOGE(TAG, "Error disabling the I2S channel: %s", esp_err_to_name(err_ret));
                 ret = err_ret;
@@ -264,21 +253,18 @@ namespace mic {
             }
         }
 
-        {
-            auto err_ret = gpio_reset_pin(m_config.chip_en);
-            if (err_ret != ESP_OK) {
-                ESP_LOGE(TAG, "Error deinitializing the CHIPEN pin: %s", esp_err_to_name(err_ret));
-                ret = err_ret;
-            }
-
-            err_ret = gpio_reset_pin(m_config.l_r);
-            if (err_ret != ESP_OK) {
-                ESP_LOGE(TAG, "Error deinitializing the L/R pin: %s", esp_err_to_name(err_ret));
-                ret = err_ret;
-            }
+        err_ret = gpio_reset_pin(m_config.chip_en);
+        if (err_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Error deinitializing the CHIPEN pin: %s", esp_err_to_name(err_ret));
+            ret = err_ret;
         }
 
-        // Cleanup used resources if a shutdown was requested
+        err_ret = gpio_reset_pin(m_config.l_r);
+        if (err_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Error deinitializing the L/R pin: %s", esp_err_to_name(err_ret));
+            ret = err_ret;
+        }
+
         if (m_buf1) {
             heap_caps_free(m_buf1);
             m_buf1           = nullptr;
@@ -291,22 +277,8 @@ namespace mic {
             m_is_buf2_filled = false;
         }
 
-        if (m_buf1_mutex) {
-            vSemaphoreDelete(m_buf1_mutex);
-            m_buf1_mutex = nullptr;
-        }
-
-        if (m_buf2_mutex) {
-            vSemaphoreDelete(m_buf2_mutex);
-            m_buf2_mutex = nullptr;
-        }
-
-        m_config             = {};
-        m_shutdown_requested = true;
-        xTaskNotifyGive(m_streaming_task_handle);
-
         if (m_handle) {
-            auto err_ret = i2s_del_channel(m_handle);
+            err_ret = i2s_del_channel(m_handle);
             if (err_ret != ESP_OK) {
                 ESP_LOGE(TAG, "Error deleting the I2S channel: %s", esp_err_to_name(err_ret));
                 ret = err_ret;
@@ -314,7 +286,12 @@ namespace mic {
             m_handle = nullptr;
         }
 
-        m_is_initialized = false;
+        m_is_buf1_in_use = false;
+        m_is_buf2_in_use = false;
+
+        m_config                = {};
+        m_streaming_task_handle = nullptr;
+        m_is_initialized        = false;
 
         return ret;
     }
@@ -333,10 +310,14 @@ namespace mic {
             ESP_LOGE(TAG, "Failed to cleanup all resources: %s", esp_err_to_name(ret));
         }
 
-        if (driver.m_streaming_task_handle) {
-            driver.m_streaming_task_handle = nullptr;
-            vTaskDelete(nullptr);
+        // Send a notification to the task that requested
+        // the deinitialization so it can safely procede.
+        if (driver.m_deinit_task_handle) {
+            xTaskNotifyGive(driver.m_deinit_task_handle);
+            driver.m_deinit_task_handle = nullptr;
         }
+
+        vTaskDelete(nullptr);
     }
 
     // State helpers
@@ -347,15 +328,17 @@ namespace mic {
         }
 
         // Check if the first buffer is being used
-        auto ret = xSemaphoreTake(driver.m_buf1_mutex, pdMS_TO_TICKS(STREAM_TASK_TIMEOUT_MS));
-        if (ret != pdTRUE) {
-            // If it's being used, switch to checking and writing to buffer 2
+        // If it's being used, switch to checking and writing to buffer 2
+        if (driver.m_is_buf1_in_use) {
             state = state_t::CHECKING_BUF2;
+            // Small delay to prevent the task from running too frequently
+            vTaskDelay(pdMS_TO_TICKS(STREAM_TASK_DELAY_MS));
             return;
         }
 
         // If buffer 1 is not being read from at the moment, start writing data to it
-        state = state_t::WRITING_BUF1;
+        driver.m_is_buf1_in_use = true;
+        state                   = state_t::WRITING_BUF1;
     }
 
     void inmp441_t::state_check_buf2(inmp441_t& driver, state_t& state) {
@@ -365,15 +348,17 @@ namespace mic {
         }
 
         // Check if the second buffer is being used
-        auto ret = xSemaphoreTake(driver.m_buf2_mutex, pdMS_TO_TICKS(STREAM_TASK_TIMEOUT_MS));
-        if (ret != pdTRUE) {
-            // If it's being used, switch to checking and writing to buffer 1
+        // If it's being used, switch to checking and writing to buffer 1
+        if (driver.m_is_buf2_in_use) {
             state = state_t::CHECKING_BUF1;
+            // Small delay to prevent the task from running too frequently
+            vTaskDelay(pdMS_TO_TICKS(STREAM_TASK_DELAY_MS));
             return;
         }
 
         // If buffer 2 is not being read from at the moment, start writing data to it
-        state = state_t::WRITING_BUF2;
+        driver.m_is_buf2_in_use = true;
+        state                   = state_t::WRITING_BUF2;
     }
 
     void inmp441_t::state_writing_buf1(inmp441_t& driver, state_t& state) {
@@ -403,7 +388,7 @@ namespace mic {
             }
         }();
 
-        xSemaphoreGive(driver.m_buf1_mutex);
+        driver.m_is_buf1_in_use = false;
     }
 
     void inmp441_t::state_writing_buf2(inmp441_t& driver, state_t& state) {
@@ -433,7 +418,7 @@ namespace mic {
             }
         }();
 
-        xSemaphoreGive(driver.m_buf2_mutex);
+        driver.m_is_buf2_in_use = false;
     }
 
     void inmp441_t::state_sleeping(inmp441_t& driver, state_t& state) {

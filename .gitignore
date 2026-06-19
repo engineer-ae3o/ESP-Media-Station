@@ -1,5 +1,6 @@
 build/
 managed_components/
+compile_commands.json
 sdkconfig
 sdkconfig.old
 *.o

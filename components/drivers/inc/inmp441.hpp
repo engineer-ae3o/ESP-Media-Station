@@ -54,6 +54,7 @@ namespace mic {
 
         // Used by the streaming task
         constexpr static size_t STREAM_TASK_TIMEOUT_MS = 50;
+        constexpr static size_t STREAM_TASK_DELAY_MS   = 5;
         constexpr static size_t MAX_RETRIES_ON_ERROR   = 5;
         constexpr static size_t STREAM_TASK_STACK_SIZE = 2048;
         constexpr static size_t STREAM_TASK_PRIORITY   = 1;
@@ -61,10 +62,10 @@ namespace mic {
         inmp441_t() = default;
         ~inmp441_t() noexcept;
 
-        inmp441_t(const inmp441_t&)            = delete;
-        inmp441_t& operator=(const inmp441_t&) = delete;
-        inmp441_t(inmp441_t&&)                 = delete;
-        inmp441_t& operator=(inmp441_t&&)      = delete;
+        inmp441_t(const inmp441_t&)                   = delete;
+        const inmp441_t& operator=(const inmp441_t&)  = delete;
+        inmp441_t(const inmp441_t&&)                  = delete;
+        const inmp441_t& operator=(const inmp441_t&&) = delete;
 
         /**
          * @brief Initialize the INMP441 driver.
@@ -109,14 +110,11 @@ namespace mic {
         /**
          * @brief Gets any available buffer that has been filled with data. Blocks until a buffer is free.
          * 
-         * @param timeout_ms Timeout in miliseconds for waiting for the buffer.
-         * 
          * @return The filled data buffer if available, error code otherwise.
          * 
          * @note If the buffers aren't read on time, they get overwritten with new data.
          */
-        [[nodiscard]] std::expected<std::span<const int32_t, RECV_BUF_SIZE_ELEMENTS>, esp_err_t>
-        get_filled_buffer(uint32_t timeout_ms = portMAX_DELAY);
+        [[nodiscard]] std::expected<std::span<const int32_t, RECV_BUF_SIZE_ELEMENTS>, esp_err_t> get_filled_buffer();
 
         /**
          * @brief Returns a buffer previously taken.
@@ -140,15 +138,18 @@ namespace mic {
         int32_t* m_buf1{};
         int32_t* m_buf2{};
 
+        std::atomic<bool> m_is_buf1_in_use;
+        std::atomic<bool> m_is_buf2_in_use;
+
         std::atomic<bool> m_is_buf1_filled;
         std::atomic<bool> m_is_buf2_filled;
-
-        SemaphoreHandle_t m_buf1_mutex{};
-        SemaphoreHandle_t m_buf2_mutex{};
 
         // Task which handles the streaming
         TaskHandle_t      m_streaming_task_handle{};
         std::atomic<bool> m_shutdown_requested;
+
+        // To be used as a synchronisation primitive when deinitializing the driver
+        TaskHandle_t m_deinit_task_handle{};
 
         // Helpers
         [[nodiscard]] esp_err_t cleanup_resources();
