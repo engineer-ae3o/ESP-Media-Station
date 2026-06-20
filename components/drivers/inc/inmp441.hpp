@@ -138,9 +138,6 @@ namespace mic {
         int32_t* m_buf1{};
         int32_t* m_buf2{};
 
-        std::atomic<bool> m_is_buf1_in_use;
-        std::atomic<bool> m_is_buf2_in_use;
-
         std::atomic<bool> m_is_buf1_filled;
         std::atomic<bool> m_is_buf2_filled;
 
