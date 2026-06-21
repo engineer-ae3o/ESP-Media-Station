@@ -5,21 +5,15 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
+#include <atomic>
 #include <utility>
 
 namespace mic {
 
+    // Public API
     inmp441_t::~inmp441_t() noexcept {
         if (m_is_initialized) {
-            m_deinit_task_handle = xTaskGetCurrentTaskHandle();
-            m_shutdown_requested = true;
-
-            // Unblock the streaming task if it is in the sleeping state
-            xTaskNotifyGive(m_streaming_task_handle);
-
-            // Block till the streaming task notifies us that its done with cleanup
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-            m_deinit_task_handle = nullptr;
+            cleanup();
         }
     }
 
@@ -38,20 +32,6 @@ namespace mic {
             return ESP_ERR_NO_MEM;
         }
 
-        // Configure the CHIPEN and L/R pins
-        const gpio_config_t io_conf = {
-            .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.chip_en) | 1ULL << std::to_underlying(m_config.l_r)),
-            .mode         = GPIO_MODE_OUTPUT,
-            .pull_up_en   = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type    = GPIO_INTR_DISABLE,
-        };
-        TRY_WITH_FUNC(gpio_config(&io_conf), m_shutdown_requested = true);
-
-        // Set whether to use the right channel of the INMP441
-        // HIGH on the l_r pin makes the INMP441 output on the right channel
-        gpio_set_level(m_config.l_r, m_config.use_right_chan);
-
         // Initalize the I2S channel
         const i2s_chan_config_t chan_config = {
             .id                   = I2S_NUM_AUTO,
@@ -63,7 +43,7 @@ namespace mic {
             .allow_pd             = true,
             .intr_priority        = 4, // Average value
         };
-        TRY_WITH_FUNC(i2s_new_channel(&chan_config, nullptr, &m_handle), m_shutdown_requested = true);
+        TRY_WITH_FUNC(i2s_new_channel(&chan_config, nullptr, &m_handle), cleanup());
 
         const i2s_std_config_t i2s_std_config = {
             .clk_cfg =
@@ -109,26 +89,40 @@ namespace mic {
                         },
                 },
         };
-        TRY_WITH_FUNC(i2s_channel_init_std_mode(m_handle, &i2s_std_config), m_shutdown_requested = true);
+        TRY_WITH_FUNC(i2s_channel_init_std_mode(m_handle, &i2s_std_config), cleanup());
+
+        // Configure the CHIPEN and L/R pins
+        const gpio_config_t io_conf = {
+            .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.chip_en) | 1ULL << std::to_underlying(m_config.l_r)),
+            .mode         = GPIO_MODE_OUTPUT,
+            .pull_up_en   = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        TRY_WITH_FUNC(gpio_config(&io_conf), cleanup());
+
+        // Set whether to use the right channel of the INMP441
+        // HIGH on the l_r pin makes the INMP441 output on the right channel
+        gpio_set_level(m_config.l_r, m_config.use_right_chan);
 
         // Allocate the buffers
         m_buf1 = static_cast<int32_t*>(heap_caps_malloc(RECV_BUF_SIZE_BYTES, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
         m_buf2 = static_cast<int32_t*>(heap_caps_malloc(RECV_BUF_SIZE_BYTES, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
 
         if (m_buf1 == nullptr || m_buf2 == nullptr) {
-            m_shutdown_requested = true;
+            cleanup();
             return ESP_ERR_NO_MEM;
         }
 
         // Enable the INMP441 with the CHIPEN pin
         gpio_set_level(m_config.chip_en, 1);
-        TRY_WITH_FUNC(i2s_channel_enable(m_handle), m_shutdown_requested = true);
+        TRY_WITH_FUNC(i2s_channel_enable(m_handle), cleanup());
 
-        // The INMP441 requires around 90ms after startup to stabilize
+        // The INMP441 requires around 90ms after startup to fully stabilize
         vTaskDelay(pdMS_TO_TICKS(90));
 
-        m_is_initialized = true;
         m_is_enabled     = true;
+        m_is_initialized = true;
 
         return ESP_OK;
     }
@@ -138,26 +132,17 @@ namespace mic {
             return ESP_ERR_INVALID_STATE;
         }
 
-        m_deinit_task_handle = xTaskGetCurrentTaskHandle();
-        m_shutdown_requested = true;
-
-        // Unblock the streaming task if it is in the sleeping state
-        xTaskNotifyGive(m_streaming_task_handle);
-
-        // Block till the streaming task notifies us that its done with cleanup
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        m_deinit_task_handle = nullptr;
+        cleanup();
 
         return ESP_OK;
     }
 
-    esp_err_t inmp441_t::enable(bool enable) {
-        if (!m_is_initialized || m_is_enabled == enable || m_is_streaming) {
+    esp_err_t inmp441_t::enable(bool on) {
+        if (!m_is_initialized || m_is_enabled == on || m_is_streaming) {
             return ESP_ERR_INVALID_STATE;
         }
 
-        m_is_enabled = enable;
-        if (m_is_enabled) {
+        if (on) {
             // If we are enabling, a delay of ~45ms is mandatory to allow the INMP441 fully stabilize
             gpio_set_level(m_config.chip_en, 1);
             vTaskDelay(pdMS_TO_TICKS(45));
@@ -168,6 +153,7 @@ namespace mic {
             TRY(i2s_channel_disable(m_handle));
             gpio_set_level(m_config.chip_en, 0);
         }
+        m_is_enabled = on;
 
         return ESP_OK;
     }
@@ -231,6 +217,18 @@ namespace mic {
     }
 
     // Helpers
+    void inmp441_t::cleanup() {
+        m_deinit_task_handle = xTaskGetCurrentTaskHandle();
+        m_shutdown_requested = true;
+
+        // Wake the streaming task since it will be sleeping
+        xTaskNotifyGive(m_streaming_task_handle);
+
+        // Block till the streaming task is done with cleanup
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        m_deinit_task_handle = nullptr;
+    }
+
     esp_err_t inmp441_t::cleanup_resources() {
 
         esp_err_t ret{ESP_OK};
@@ -309,10 +307,11 @@ namespace mic {
             ESP_LOGE(TAG, "Failed to cleanup all resources: %s", esp_err_to_name(ret));
         }
 
-        // Send a notification to the task that requested
-        // the deinitialization so it can safely procede.
-        if (driver.m_deinit_task_handle) {
-            xTaskNotifyGive(driver.m_deinit_task_handle);
+        // Send a notification to the task that requested the deinitialization
+        // so it can safely return since all cleanup has been done properly
+        TaskHandle_t deinit_task_handle = driver.m_deinit_task_handle;
+        if (deinit_task_handle != nullptr) {
+            xTaskNotifyGive(deinit_task_handle);
         }
 
         vTaskDelete(nullptr);
@@ -325,19 +324,18 @@ namespace mic {
             return;
         }
 
-        // Check if the first buffer is being used
-        // If it's being used, switch to checking and writing to buffer 2
+        // Check if the first buffer holds unread data. If it does, switch to and check buffer 2
         if (driver.m_is_buf1_filled) {
             state = state_t::CHECKING_BUF2;
 
             // Delay the streaming thread whenever the buffer being used is swapped
+            // to prevent the streaming task from over utilizing the CPU
             vTaskDelay(pdMS_TO_TICKS(STREAM_TASK_DELAY_MS));
             return;
         }
 
-        // If buffer 1 is not being read from at the moment, start writing data to it
-        driver.m_is_buf1_filled = false;
-        state                   = state_t::WRITING_BUF1;
+        // If buffer 1 holds data that has been already been read, start writing new data to it
+        state = state_t::WRITING_BUF1;
     }
 
     void inmp441_t::state_check_buf2(inmp441_t& driver, state_t& state) {
@@ -346,19 +344,18 @@ namespace mic {
             return;
         }
 
-        // Check if the second buffer is being used
-        // If it's being used, switch to checking and writing to buffer 1
+        // Check if the second buffer holds unread data. If it does, switch to and check buffer 1
         if (driver.m_is_buf2_filled) {
             state = state_t::CHECKING_BUF1;
 
             // Delay the streaming thread whenever the buffer being used is swapped
+            // to prevent the streaming task from over utilizing the CPU
             vTaskDelay(pdMS_TO_TICKS(STREAM_TASK_DELAY_MS));
             return;
         }
 
-        // If buffer 2 is not being read from at the moment, start writing data to it
-        driver.m_is_buf2_filled = false;
-        state                   = state_t::WRITING_BUF2;
+        // If buffer 2 holds data that has been already been read, start writing new data to it
+        state = state_t::WRITING_BUF2;
     }
 
     void inmp441_t::state_writing_buf1(inmp441_t& driver, state_t& state) {
@@ -367,31 +364,25 @@ namespace mic {
             return;
         }
 
-        esp_err_t ret{};
-        for (uint8_t i{}; i < MAX_RETRIES_ON_ERROR; i++) {
-            size_t num_of_bytes_read{};
-            ret = i2s_channel_read(driver.m_handle, driver.m_buf1, RECV_BUF_SIZE_BYTES, &num_of_bytes_read, STREAM_TASK_TIMEOUT_MS);
-            if (ret == ESP_OK && num_of_bytes_read == RECV_BUF_SIZE_BYTES) {
-                // No errors: We check and try to write to buffer 2 next
-                state                   = state_t::CHECKING_BUF2;
-                driver.m_is_buf1_filled = true;
-
-                // Delay the streaming thread whenever the buffer being used is swapped
-                vTaskDelay(pdMS_TO_TICKS(STREAM_TASK_DELAY_MS));
-                return;
+        [&] {
+            esp_err_t ret{};
+            for (uint8_t i{}; i < MAX_RETRIES_ON_ERROR; i++) {
+                size_t num_of_bytes_read{};
+                ret = i2s_channel_read(driver.m_handle, driver.m_buf1, RECV_BUF_SIZE_BYTES, &num_of_bytes_read, STREAM_TASK_TIMEOUT_MS);
+                if (ret == ESP_OK && num_of_bytes_read == RECV_BUF_SIZE_BYTES) {
+                    driver.m_is_buf1_filled = true;
+                    return;
+                }
+                ESP_LOGE(TAG, "Failed to read data from the I2S channel into buffer 1 on %u iteration: %s", i, esp_err_to_name(ret));
             }
-            ESP_LOGE(TAG, "Failed to read data from the I2S channel into buffer 1 on %u iteration: %s", i, esp_err_to_name(ret));
-        }
 
-        if (driver.m_config.error_cb != nullptr) {
-            driver.m_config.error_cb(ret);
-        }
+            if (driver.m_config.error_cb != nullptr) {
+                driver.m_config.error_cb(ret);
+            }
+        }();
 
-        // All read attempts failed. Try to write to buffer 2
+        // Switch state to checking buffer 2 regardless of whether we failed to write data to buffer 1 or we succeded
         state = state_t::CHECKING_BUF2;
-
-        // Delay the streaming thread whenever the buffer being used is swapped
-        vTaskDelay(pdMS_TO_TICKS(STREAM_TASK_DELAY_MS));
     }
 
     void inmp441_t::state_writing_buf2(inmp441_t& driver, state_t& state) {
@@ -400,31 +391,25 @@ namespace mic {
             return;
         }
 
-        esp_err_t ret{};
-        for (uint8_t i{}; i < MAX_RETRIES_ON_ERROR; i++) {
-            size_t num_of_bytes_read{};
-            ret = i2s_channel_read(driver.m_handle, driver.m_buf2, RECV_BUF_SIZE_BYTES, &num_of_bytes_read, STREAM_TASK_TIMEOUT_MS);
-            if (ret == ESP_OK && num_of_bytes_read == RECV_BUF_SIZE_BYTES) {
-                // No errors: We check and try to write to buffer 1 next
-                state                   = state_t::CHECKING_BUF1;
-                driver.m_is_buf2_filled = true;
-
-                // Delay the streaming thread whenever the buffer being used is swapped
-                vTaskDelay(pdMS_TO_TICKS(STREAM_TASK_DELAY_MS));
-                return;
+        [&] {
+            esp_err_t ret{};
+            for (uint8_t i{}; i < MAX_RETRIES_ON_ERROR; i++) {
+                size_t num_of_bytes_read{};
+                ret = i2s_channel_read(driver.m_handle, driver.m_buf2, RECV_BUF_SIZE_BYTES, &num_of_bytes_read, STREAM_TASK_TIMEOUT_MS);
+                if (ret == ESP_OK && num_of_bytes_read == RECV_BUF_SIZE_BYTES) {
+                    driver.m_is_buf2_filled = true;
+                    return;
+                }
+                ESP_LOGE(TAG, "Failed to read data from the I2S channel into buffer 2 on %u iteration: %s", i, esp_err_to_name(ret));
             }
-            ESP_LOGE(TAG, "Failed to read data from the I2S channel into buffer 2 on %u iteration: %s", i, esp_err_to_name(ret));
-        }
 
-        if (driver.m_config.error_cb != nullptr) {
-            driver.m_config.error_cb(ret);
-        }
+            if (driver.m_config.error_cb != nullptr) {
+                driver.m_config.error_cb(ret);
+            }
+        }();
 
-        // All read attempts failed. Try to write to buffer 1
+        // Switch state to checking buffer 1 regardless of whether we failed to write data to buffer 1 or we succeded
         state = state_t::CHECKING_BUF1;
-
-        // Delay the streaming thread whenever the buffer being used is swapped
-        vTaskDelay(pdMS_TO_TICKS(STREAM_TASK_DELAY_MS));
     }
 
     void inmp441_t::state_sleeping(inmp441_t& driver, state_t& state) {

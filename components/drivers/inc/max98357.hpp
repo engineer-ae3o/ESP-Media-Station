@@ -50,7 +50,7 @@ namespace amp {
         constexpr static size_t MAX_DMA_BUF_SIZE = 4092;
 
         // Number of DMA descriptors being used
-        constexpr static size_t DMA_DESCR_NUM = 2;
+        constexpr static size_t DMA_DESCR_NUM = 4;
 
         // Slot per frame is 2 if in stereo mode, 1 if using any of the channels individually
         constexpr static size_t SLOTS_PER_FRAME = mode == mode_t::STEREO ? 2 : 1;

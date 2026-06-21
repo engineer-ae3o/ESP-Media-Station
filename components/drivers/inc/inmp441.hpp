@@ -5,7 +5,6 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
 
 #include <span>
 #include <array>
@@ -86,15 +85,15 @@ namespace mic {
         /**
          * @brief Enables the INMP441 through the CHIPEN gpio pin.
          * 
-         * @param enable Whether or not to enable INMP441.
+         * @param on Whether or not to enable the INMP441.
          *
          * @return ESP_OK on success, error code otherwise.
          */
-        [[nodiscard]] esp_err_t enable(bool enable = true);
+        [[nodiscard]] esp_err_t enable(bool on = true);
 
         /**
          * @brief Starts filling any of the available buffers with data. Uses
-         *        double buffering. When one buffer is filled, swaps to the other.
+         *        double buffering. When one buffer is filled, the task swaps to the other.
          * 
          * @return ESP_OK if data started streaming successfully, error code otherwise.
          */
@@ -108,21 +107,21 @@ namespace mic {
         [[nodiscard]] esp_err_t stop_stream();
 
         /**
-         * @brief Gets any available buffer that has been filled with data. Blocks until a buffer is free.
+         * @brief Gets any available buffer that has been filled with data. Returns
+         *        immediately whether or not a buffer is filled with fresh data.
          * 
          * @return The filled data buffer if available, error code otherwise.
          * 
-         * @note If the buffers aren't read on time, they get overwritten with new data.
+         * @note If the buffers aren't read on time, the streaming task blocks and polls till a buffer is read.
          */
         [[nodiscard]] std::expected<std::span<const int32_t, RECV_BUF_SIZE_ELEMENTS>, esp_err_t> get_filled_buffer();
 
         /**
-         * @brief Returns a buffer previously taken.
+         * @brief Returns a previously taken buffer.
+         *
+         * @param[in] buf The pointer to the buffer to be returned.
          * 
          * @return ESP_OK if the buffer is valid and was returned successfully, error code otherwise.
-         * 
-         * @note Not returning the buffer on time causes the driver to continuously write data to the
-         *       other buffer.
          */
         [[nodiscard]] esp_err_t return_buffer(const int32_t* buf);
 
@@ -146,9 +145,10 @@ namespace mic {
         std::atomic<bool> m_shutdown_requested;
 
         // To be used as a synchronisation primitive when deinitializing the driver
-        TaskHandle_t m_deinit_task_handle{};
+        std::atomic<TaskHandle_t> m_deinit_task_handle;
 
         // Helpers
+        void                    cleanup();
         [[nodiscard]] esp_err_t cleanup_resources();
         static void             stream_task(void* arg);
 

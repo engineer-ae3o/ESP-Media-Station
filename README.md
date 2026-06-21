@@ -18,9 +18,9 @@ The project targets intermediate ESP-IDF development and serves as a platform fo
 | --- | --- |
 | MCU | ESP32-S3 N16R8 (16MB Flash, 8MB PSRAM) |
 | Camera | OV3660 via FPC connector (DVP interface) |
-| Display | ILI9341 320x240 TFT with resistive touch |
-| Audio Input | INMP441 MEMS microphone |
-| Audio Output | MAX98357 audio amplifier and standard 4-ohm speaker |
+| Display | ILI9341 320x240 TFT with resistive touch via the XPT2046 controller |
+| Audio Input | INMP441 MEMS microphone outputting PCM |
+| Audio Output | MAX98357 audio amplifier and standard 4-ohm speaker expecting PCM |
 
 ---
 
@@ -37,10 +37,8 @@ The project targets intermediate ESP-IDF development and serves as a platform fo
 
 ## Security
 
-Both flash encryption and secure boot are configured via eFuse and are irreversible in production mode. Development mode is used during active development to allow re-flashing.
-
 - **Flash Encryption:** AES-256-XTS. Key generated on device, never exposed.
-- **Secure Boot:** ECDSA. Bootloader and application partition signed. Public key digest burned to eFuse.
+- **Secure Boot:** Uses ECDSA. Bootloader and application partition signed. Public key digest burned to eFuse.
 
 ---
 
@@ -53,11 +51,10 @@ idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-To build tests
+To build the tests
 
 ```bash
 cd tests
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
-
