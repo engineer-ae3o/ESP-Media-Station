@@ -41,7 +41,7 @@ namespace disp {
             return ret;
         }
 
-        // Configure SPI device
+        // Configure the ILI9341 as an SPI device
         const spi_device_interface_config_t dev_cfg = {
             .command_bits     = 0,
             .address_bits     = 0,
@@ -53,7 +53,7 @@ namespace disp {
             .cs_ena_posttrans = 0,
             .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
             .input_delay_ns   = 0,
-            .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
+            .sample_point     = SPI_SAMPLING_POINT_PHASE_1,
             .spics_io_num     = m_config.cs_pin,
             .flags            = 0,
             .queue_size       = TRANS_QUEUE_SIZE,

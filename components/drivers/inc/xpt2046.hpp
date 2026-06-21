@@ -2,13 +2,13 @@
 
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
+
 #include "esp_err.h"
 #include "esp_log.h"
 
 #include "utils.hpp"
 
 #include <span>
-#include <cstddef>
 #include <cstdint>
 #include <utility>
 
@@ -24,7 +24,7 @@ namespace touch {
         gpio_num_t irq_pin{GPIO_NUM_NC};
     };
 
-    template<bool init_gpio_isr_service = true>
+    template<bool init_gpio_isr_service = true, int flags = ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE | ESP_INTR_FLAG_LEVEL4>
     class xpt2046_t {
     public:
         constexpr static auto TIMEOUT_MS{50U};
@@ -68,33 +68,41 @@ namespace touch {
                 .pull_down_en = GPIO_PULLDOWN_DISABLE,
                 .intr_type    = GPIO_INTR_NEGEDGE,
             };
-
             auto ret = gpio_config(&irq_config);
             if (ret != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to configure the irq pin: %s", esp_err_to_name(ret));
                 return ret;
             }
 
-            // Setup ISR handler
-            ret = gpio_install_isr_service(0);
-            if (ret != ESP_OK || ret != ESP_ERR_INVALID_STATE) {
-                ESP_LOGE(TAG, "Failed to register the global gpio ISR service: %s", esp_err_to_name(ret));
+            if constexpr (init_gpio_isr_service) {
+                // Install the global gpio ISR service
+                ret = gpio_install_isr_service(flags);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to register the global gpio ISR service: %s", esp_err_to_name(ret));
+                    return ret;
+                }
+            }
+
+            // Add the ISR for the IRQ pin
+            ret = gpio_isr_handler_add(m_config.irq_pin, nullptr, this);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to add the gpio ISR for the IRQ pin: %s", esp_err_to_name(ret));
                 return ret;
             }
 
-            // Configure SPI device
+            // Configure the XPT2046 as an SPI device
             const spi_device_interface_config_t dev_cfg = {
                 .command_bits     = 0,
                 .address_bits     = 0,
                 .dummy_bits       = 0,
                 .mode             = 0, // The XPT2046 accepts a CPOL-CPHA of 0-0
                 .clock_source     = SPI_CLK_SRC_DEFAULT,
-                .duty_cycle_pos   = 128, // Default param
+                .duty_cycle_pos   = 128, // Default value
                 .cs_ena_pretrans  = 0,
                 .cs_ena_posttrans = 0,
                 .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
                 .input_delay_ns   = 0,
-                .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
+                .sample_point     = SPI_SAMPLING_POINT_PHASE_1,
                 .spics_io_num     = m_config.cs_pin,
                 .flags            = 0,
                 .queue_size       = TRANS_QUEUE_SIZE,

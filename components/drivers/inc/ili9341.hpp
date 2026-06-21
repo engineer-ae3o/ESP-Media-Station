@@ -12,12 +12,14 @@ namespace disp {
     struct config_t {
         // SPI configuration
         spi_host_device_t spi_host{};
-        uint32_t          spi_clock_speed_hz{};
+
+        uint32_t spi_clock_speed_hz{};
 
         // GPIO pins
+        gpio_num_t led_pin{GPIO_NUM_NC};
+        gpio_num_t rst_pin{GPIO_NUM_NC};
         gpio_num_t cs_pin{GPIO_NUM_NC};
         gpio_num_t dc_pin{GPIO_NUM_NC};
-        gpio_num_t rst_pin{GPIO_NUM_NC};
 
         // Display parameter
         uint8_t rotation{}; // 0-3 for different orientations
@@ -44,15 +46,6 @@ namespace disp {
         ili9341_t& operator=(const ili9341_t&) = delete;
         ili9341_t(ili9341_t&&)                 = delete;
         ili9341_t& operator=(ili9341_t&&)      = delete;
-
-        /**
-         * @brief Initialize the ili9341 driver.
-         *
-         * @param[in] config Reference to struct containing driver configuration.
-         * 
-         * @return ESP_OK on success, error code otherwise.
-         */
-        [[nodiscard]] esp_err_t init_spi_bus(const bus_config_t& config);
 
         /**
          * @brief Initialize the ili9341 driver.
@@ -97,6 +90,15 @@ namespace disp {
          * @return ESP_OK if data transmitted successfully, error code otherwise.
          */
         [[nodiscard]] esp_err_t set_screen(uint16_t color, bool little_endian = true);
+
+        /**
+         * @brief Sets the screen to given brightness level.
+         *
+         * @param level Level to.
+         *
+         * @return ESP_OK if data transmitted successfully, error code otherwise.
+         */
+        [[nodiscard]] esp_err_t set_brightness(uint8_t level = 100);
 
     private:
         bool                m_is_initialized{};
