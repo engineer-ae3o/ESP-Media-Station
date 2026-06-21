@@ -2,18 +2,21 @@
 
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
+
 #include "esp_err.h"
+#include "hal/ledc_types.h"
 
 #include <span>
 #include <cstdint>
+#include <utility>
 
 namespace disp {
 
     struct config_t {
         // SPI configuration
         spi_host_device_t spi_host{};
-
-        uint32_t spi_clock_speed_hz{};
+        uint32_t          spi_clock_speed_hz{};
 
         // GPIO pins
         gpio_num_t led_pin{GPIO_NUM_NC};
@@ -23,6 +26,10 @@ namespace disp {
 
         // Display parameter
         uint8_t rotation{}; // 0-3 for different orientations
+
+        // Timer and channel for pwm control of the LED
+        ledc_timer_t   led_ledc_timer{};
+        ledc_channel_t led_ledc_channel{};
     };
 
     struct coord_t {
@@ -31,11 +38,16 @@ namespace disp {
 
     class ili9341_t {
     public:
-        constexpr static auto MAX_WIDTH{240U};
-        constexpr static auto MAX_HEIGHT{320U};
+        constexpr static auto MAX_WIDTH  = 240U;
+        constexpr static auto MAX_HEIGHT = 320U;
 
-        constexpr static auto TIMEOUT_MS{50U};
-        constexpr static auto TRANS_QUEUE_SIZE{5U};
+        constexpr static auto TIMEOUT_MS       = 50U;
+        constexpr static auto TRANS_QUEUE_SIZE = 5U;
+
+        constexpr static auto LED_LEDC_TIMER_RES     = LEDC_TIMER_8_BIT;
+        constexpr static auto LED_LEDC_TIMER_FREQ_HZ = 20'000U;
+
+        constexpr static auto LEDC_RES_MAX_VAL = 1 << std::to_underlying(LED_LEDC_TIMER_RES);
 
         constexpr static auto* TAG{"ILI9341"};
 
@@ -92,13 +104,23 @@ namespace disp {
         [[nodiscard]] esp_err_t set_screen(uint16_t color, bool little_endian = true);
 
         /**
+         * @brief Help with the initialization of the timer to be used for the Ledc channel.
+         *
+         * @param timer Timer to use for the Ledc channel.
+         * @param init  Whether or not to initiaize of deinitialize the Ledc timer.
+         * 
+         * @return ESP_OK on success, error code otherwise.
+         */
+        [[nodiscard]] static esp_err_t init_ledc_timer(ledc_timer_t timer, bool init = true);
+
+        /**
          * @brief Sets the screen to given brightness level.
          *
-         * @param level Level to.
+         * @param level Level to set the display's brightness.
          *
          * @return ESP_OK if data transmitted successfully, error code otherwise.
          */
-        [[nodiscard]] esp_err_t set_brightness(uint8_t level = 100);
+        [[nodiscard]] esp_err_t set_brightness(uint8_t level = 255) const;
 
     private:
         bool                m_is_initialized{};

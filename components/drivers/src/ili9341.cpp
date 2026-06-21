@@ -83,6 +83,26 @@ namespace disp {
             return ret;
         }
 
+        // Initialize the Ledc channel to use to control the LED for PWM
+        const ledc_channel_config_t ledc_chan_config = {
+            .gpio_num    = std::to_underlying(m_config.led_pin),
+            .speed_mode  = LEDC_LOW_SPEED_MODE,
+            .channel     = m_config.led_ledc_channel,
+            .timer_sel   = m_config.led_ledc_timer,
+            .duty        = LEDC_RES_MAX_VAL,
+            .hpoint      = LEDC_RES_MAX_VAL - 1,
+            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
+            .flags       = {.output_invert = 0},
+            .deconfigure = false,
+        };
+
+        ret = ledc_channel_config(&ledc_chan_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to intialize the Ledc channel: %s", esp_err_to_name(ret));
+            cleanup_resources();
+            return ret;
+        }
+
         m_is_initialized = true;
         ESP_LOGI(TAG, "Initialization complete");
 
@@ -181,14 +201,70 @@ namespace disp {
         return ret;
     }
 
+    esp_err_t ili9341_t::init_ledc_timer(ledc_timer_t timer, bool init) {
+
+        ledc_timer_config_t led_timer_config = {
+            .speed_mode      = LEDC_LOW_SPEED_MODE,
+            .duty_resolution = LED_LEDC_TIMER_RES,
+            .timer_num       = timer,
+            .freq_hz         = LED_LEDC_TIMER_FREQ_HZ,
+            .clk_cfg         = LEDC_AUTO_CLK,
+            .deconfigure     = false,
+        };
+
+        if (!init) {
+            led_timer_config.deconfigure = true;
+        }
+
+        TRY(ledc_timer_config(&led_timer_config));
+
+        return ESP_OK;
+    }
+
+    esp_err_t ili9341_t::set_brightness(uint8_t level) const {
+        if (!m_is_initialized) {
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        if (level > 100) {
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        TRY(ledc_set_duty(LEDC_LOW_SPEED_MODE, m_config.led_ledc_channel, level));
+        TRY(ledc_update_duty(LEDC_LOW_SPEED_MODE, m_config.led_ledc_channel));
+
+        return ESP_OK;
+    }
+
     // Helpers
     void ili9341_t::cleanup_resources() {
         if (m_device_handle) {
             spi_bus_remove_device(m_device_handle);
             m_device_handle = nullptr;
         }
+
+        // Deinitialize the ledc channel
+        const ledc_channel_config_t ledc_chan_deconfig = {
+            .gpio_num    = std::to_underlying(m_config.led_pin),
+            .speed_mode  = LEDC_LOW_SPEED_MODE,
+            .channel     = m_config.led_ledc_channel,
+            .timer_sel   = m_config.led_ledc_timer,
+            .duty        = LEDC_RES_MAX_VAL,
+            .hpoint      = LEDC_RES_MAX_VAL - 1,
+            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
+            .flags       = {.output_invert = 0},
+            .deconfigure = true,
+        };
+
+        auto ret = ledc_channel_config(&ledc_chan_deconfig);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to deintialize the Ledc channel: %s", esp_err_to_name(ret));
+        }
+
         gpio_reset_pin(m_config.dc_pin);
         gpio_reset_pin(m_config.rst_pin);
+        gpio_reset_pin(m_config.led_pin);
+
         m_config = {};
     }
 
