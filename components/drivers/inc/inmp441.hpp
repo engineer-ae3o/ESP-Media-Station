@@ -18,11 +18,11 @@ namespace mic {
         bool use_right_chan{};
         void (*error_cb)(esp_err_t error){};
 
-        gpio_num_t chip_en{GPIO_NUM_NC};
-        gpio_num_t bclk{GPIO_NUM_NC};
-        gpio_num_t data{GPIO_NUM_NC};
-        gpio_num_t l_r{GPIO_NUM_NC};
-        gpio_num_t ws{GPIO_NUM_NC};
+        gpio_num_t chip_en_pin{GPIO_NUM_NC};
+        gpio_num_t bclk_pin{GPIO_NUM_NC};
+        gpio_num_t din_pin{GPIO_NUM_NC};
+        gpio_num_t l_r_pin{GPIO_NUM_NC};
+        gpio_num_t ws_pin{GPIO_NUM_NC};
     };
 
     class inmp441_t {

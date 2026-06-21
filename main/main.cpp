@@ -15,30 +15,20 @@ namespace {
     [[noreturn]] void disp_task(void* arg) {
         (void)arg;
 
-        constexpr spi_bus_config_t bus_config = {
-            .mosi_io_num           = config::LCD_MOSI_PIN,
-            .miso_io_num           = GPIO_NUM_NC,
-            .sclk_io_num           = config::LCD_CLK_PIN,
-            .quadwp_io_num         = GPIO_NUM_NC,
-            .quadhd_io_num         = GPIO_NUM_NC,
-            .data4_io_num          = GPIO_NUM_NC,
-            .data5_io_num          = GPIO_NUM_NC,
-            .data6_io_num          = GPIO_NUM_NC,
-            .data7_io_num          = GPIO_NUM_NC,
-            .data_io_default_level = false,
-            .max_transfer_sz       = (disp::MAX_WIDTH * disp::MAX_HEIGHT * 2),
-            .flags                 = SPICOMMON_BUSFLAG_IOMUX_PINS,
-            .isr_cpu_id            = ESP_INTR_CPU_AFFINITY_AUTO,
-            .intr_flags            = 0,
+        constexpr utils::spi_bus_config_t ili9341_bus_config = {
+            .mosi_pin = config::LCD_MOSI_PIN,
+            .miso_pin = GPIO_NUM_NC,
+            .sclk_pin = config::LCD_CLK_PIN,
         };
-        ESP_ERROR_CHECK(spi_bus_initialize(config::LCD_SPI_BUS, &bus_config, SPI_DMA_CH_AUTO));
+        ESP_ERROR_CHECK(
+            utils::init_spi_bus(config::LCD_SPI_BUS, disp::ili9341_t::MAX_WIDTH * disp::ili9341_t::MAX_HEIGHT, ili9341_bus_config));
 
         constexpr disp::config_t config = {
             .spi_host           = config::LCD_SPI_BUS,
             .spi_clock_speed_hz = config::LCD_SPI_CLK_SPEED_HZ,
-            .cs                 = config::LCD_CS_PIN,
-            .dc                 = config::LCD_DC_PIN,
-            .rst                = config::LCD_RST_PIN,
+            .cs_pin             = config::LCD_CS_PIN,
+            .dc_pin             = config::LCD_DC_PIN,
+            .rst_pin            = config::LCD_RST_PIN,
             .rotation           = 0,
         };
 
@@ -61,11 +51,11 @@ namespace {
 
         // Initialize the MAX98357A audio amplifier
         constexpr amp::config_t max_config = {
-            .bclk = config::MAX_BCLK,
-            .data = config::MAX_DATA,
-            .gain = config::MAX_GAIN,
-            .ws   = config::MAX_WS,
-            .sd   = config::MAX_SD,
+            .bclk_pin = config::MAX_BCLK,
+            .dout_pin = config::MAX_DATA,
+            .gain_pin = config::MAX_GAIN,
+            .ws_pin   = config::MAX_WS,
+            .sd_pin   = config::MAX_SD,
         };
 
         amp::max98357a_t<amp::gain_t::dB_12, amp::mode_t::LEFT_CHANNEL> max98357;
@@ -76,11 +66,11 @@ namespace {
         constexpr mic::config_t inmp_config = {
             .use_right_chan = false,
             .error_cb       = nullptr,
-            .chip_en        = config::INMP_CHIPEN,
-            .bclk           = config::INMP_BCLK,
-            .data           = config::INMP_DATA,
-            .l_r            = config::INMP_L_R,
-            .ws             = config::INMP_WS,
+            .chip_en_pin    = config::INMP_CHIPEN,
+            .bclk_pin       = config::INMP_BCLK,
+            .din_pin        = config::INMP_DATA,
+            .l_r_pin        = config::INMP_L_R,
+            .ws_pin         = config::INMP_WS,
         };
 
         mic::inmp441_t inmp441;

@@ -26,21 +26,22 @@ namespace disp {
         m_config = config;
 
         // Configure DC and RESET pins
-        const gpio_config_t io_conf = {
-            .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.dc) | 1ULL << std::to_underlying(m_config.rst)),
+        const gpio_config_t pin_config = {
+            .pin_bit_mask =
+                static_cast<uint64_t>(1ULL << std::to_underlying(m_config.dc_pin) | 1ULL << std::to_underlying(m_config.rst_pin)),
             .mode         = GPIO_MODE_OUTPUT,
             .pull_up_en   = GPIO_PULLUP_DISABLE,
             .pull_down_en = GPIO_PULLDOWN_DISABLE,
             .intr_type    = GPIO_INTR_DISABLE,
         };
 
-        auto ret = gpio_config(&io_conf);
+        auto ret = gpio_config(&pin_config);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to configure RST and DC pins: %s", esp_err_to_name(ret));
             return ret;
         }
 
-        // Configure SPI device
+        // Configure the ILI9341 as an SPI device
         const spi_device_interface_config_t dev_cfg = {
             .command_bits     = 0,
             .address_bits     = 0,
@@ -52,8 +53,8 @@ namespace disp {
             .cs_ena_posttrans = 0,
             .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
             .input_delay_ns   = 0,
-            .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
-            .spics_io_num     = m_config.cs,
+            .sample_point     = SPI_SAMPLING_POINT_PHASE_1,
+            .spics_io_num     = m_config.cs_pin,
             .flags            = 0,
             .queue_size       = TRANS_QUEUE_SIZE,
             .pre_cb           = nullptr,
@@ -69,15 +70,35 @@ namespace disp {
 
         // Hardware reset
         // Toggle the reset pin
-        gpio_set_level(m_config.rst, 0);
+        gpio_set_level(m_config.rst_pin, 0);
         vTaskDelay(pdMS_TO_TICKS(10));
-        gpio_set_level(m_config.rst, 1);
+        gpio_set_level(m_config.rst_pin, 1);
         vTaskDelay(pdMS_TO_TICKS(120));
 
-        // Send initialization sequence to ili9341
+        // Send initialization sequence to the ili9341
         ret = init_sequence();
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to transmit initialization sequence: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to transmit the initialization sequence: %s", esp_err_to_name(ret));
+            cleanup_resources();
+            return ret;
+        }
+
+        // Initialize the Ledc channel to use to control the LED for PWM
+        const ledc_channel_config_t ledc_chan_config = {
+            .gpio_num    = std::to_underlying(m_config.led_pin),
+            .speed_mode  = LEDC_LOW_SPEED_MODE,
+            .channel     = m_config.led_ledc_channel,
+            .timer_sel   = m_config.led_ledc_timer,
+            .duty        = LEDC_RES_MAX_VAL,
+            .hpoint      = LEDC_RES_MAX_VAL - 1,
+            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
+            .flags       = {.output_invert = 0},
+            .deconfigure = false,
+        };
+
+        ret = ledc_channel_config(&ledc_chan_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to intialize the Ledc channel: %s", esp_err_to_name(ret));
             cleanup_resources();
             return ret;
         }
@@ -180,14 +201,66 @@ namespace disp {
         return ret;
     }
 
+    esp_err_t ili9341_t::init_ledc_timer(ledc_timer_t timer, bool init) {
+
+        ledc_timer_config_t led_timer_config = {
+            .speed_mode      = LEDC_LOW_SPEED_MODE,
+            .duty_resolution = LED_LEDC_TIMER_RES,
+            .timer_num       = timer,
+            .freq_hz         = LED_LEDC_TIMER_FREQ_HZ,
+            .clk_cfg         = LEDC_AUTO_CLK,
+            .deconfigure     = false,
+        };
+
+        if (!init) {
+            led_timer_config.deconfigure = true;
+        }
+
+        TRY(ledc_timer_config(&led_timer_config));
+
+        return ESP_OK;
+    }
+
+    esp_err_t ili9341_t::set_brightness(uint8_t level) const {
+        if (!m_is_initialized) {
+            return ESP_ERR_INVALID_STATE;
+        }
+
+        TRY(ledc_set_duty(LEDC_LOW_SPEED_MODE, m_config.led_ledc_channel, level));
+        TRY(ledc_update_duty(LEDC_LOW_SPEED_MODE, m_config.led_ledc_channel));
+
+        return ESP_OK;
+    }
+
     // Helpers
     void ili9341_t::cleanup_resources() {
         if (m_device_handle) {
             spi_bus_remove_device(m_device_handle);
             m_device_handle = nullptr;
         }
-        gpio_reset_pin(m_config.dc);
-        gpio_reset_pin(m_config.rst);
+
+        // Deinitialize the ledc channel
+        const ledc_channel_config_t ledc_chan_deconfig = {
+            .gpio_num    = std::to_underlying(m_config.led_pin),
+            .speed_mode  = LEDC_LOW_SPEED_MODE,
+            .channel     = m_config.led_ledc_channel,
+            .timer_sel   = m_config.led_ledc_timer,
+            .duty        = LEDC_RES_MAX_VAL,
+            .hpoint      = LEDC_RES_MAX_VAL - 1,
+            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
+            .flags       = {.output_invert = 0},
+            .deconfigure = true,
+        };
+
+        auto ret = ledc_channel_config(&ledc_chan_deconfig);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to deintialize the Ledc channel: %s", esp_err_to_name(ret));
+        }
+
+        gpio_reset_pin(m_config.dc_pin);
+        gpio_reset_pin(m_config.rst_pin);
+        gpio_reset_pin(m_config.led_pin);
+
         m_config = {};
     }
 
@@ -307,7 +380,7 @@ namespace disp {
 
     esp_err_t ili9341_t::send_cmd(uint8_t cmd) {
 
-        gpio_set_level(m_config.dc, 0); // Command mode
+        gpio_set_level(m_config.dc_pin, 0); // Command mode
 
         spi_transaction_t trans = {
             .flags            = 0,
@@ -352,7 +425,7 @@ namespace disp {
 
     esp_err_t ili9341_t::send_data(std::span<const uint8_t> data) {
 
-        gpio_set_level(m_config.dc, 1); // Data mode
+        gpio_set_level(m_config.dc_pin, 1); // Data mode
 
         spi_transaction_t trans = {
             .flags            = 0,
