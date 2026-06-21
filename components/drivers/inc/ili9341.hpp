@@ -27,10 +27,12 @@ namespace disp {
         gpio_num_t dc{GPIO_NUM_NC};
         gpio_num_t rst{GPIO_NUM_NC};
 
-        // Display parameters
-        size_t  width{};
-        size_t  height{};
+        // Display parameter
         uint8_t rotation{}; // 0-3 for different orientations
+    };
+
+    struct coord_t {
+        uint16_t x1{}, y1{}, x2{}, y2{};
     };
 
     class ili9341_t {
@@ -62,8 +64,7 @@ namespace disp {
         /**
          * @brief Flush the given pixels to the display controller.
          *
-         * @param x1, y1   Top left corner of update region.
-         * @param x2, y2   Bottom right corner of update region.
+         * @param[in] coord Struct containing coordinates to write to.
          * @param[in] data RGB565 pixel buffer.
          *
          * @return ESP_OK if data transmitted successfully, error code otherwise.
@@ -75,7 +76,7 @@ namespace disp {
          *       the actual pixel transmission takes place. Do so by marking the buffer
          *       with `DMA_ATTR` if statically allocated.
          */
-        [[nodiscard]] esp_err_t flush(size_t x1, size_t y1, size_t x2, size_t y2, std::span<const uint16_t> data);
+        [[nodiscard]] esp_err_t flush(const coord_t& coord, std::span<const uint16_t> data);
 
         /**
          * @brief Sets the screen to given RGB16 color.
@@ -97,8 +98,8 @@ namespace disp {
         esp_err_t init_sequence();
         void      cleanup_resources();
         esp_err_t send_cmd(uint8_t cmd);
+        esp_err_t set_window(const coord_t& coord);
         esp_err_t send_data(std::span<const uint8_t> data);
-        esp_err_t set_window(size_t x1, size_t y1, size_t x2, size_t y2);
     };
 
 } // namespace disp

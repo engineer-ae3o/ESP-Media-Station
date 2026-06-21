@@ -15,40 +15,46 @@ The project targets intermediate ESP-IDF development and serves as a platform fo
 ## Hardware
 
 | Component | Details |
-|---|---|
+| --- | --- |
 | MCU | ESP32-S3 N16R8 (16MB Flash, 8MB PSRAM) |
 | Camera | OV3660 via FPC connector (DVP interface) |
-| Display | ILI9341 320x240 TFT with resistive touch |
-| Audio Input | INMP441 MEMS microphone |
-| Audio Output | MAX98357 Audio Amp. and standard  |
+| Display | ILI9341 320x240 TFT with resistive touch via the XPT2046 controller |
+| Audio Input | INMP441 MEMS microphone outputting PCM |
+| Audio Output | MAX98357 audio amplifier and standard 4-ohm speaker expecting PCM |
 
 ---
 
 ## Features
 
 - **Live video streaming:** MJPEG over a custom RTP/UDP implementation (RFC 2435)
-- **Two-way audio:** Full duplex I2S mic input and speaker output, streamed over a separate RTP session
+- **Two way audio:** Full duplex I2S mic input and speaker output, streamed over a separate RTP session
 - **Human presence detection:** TensorFlow Lite for Microcontrollers (INT8 quantized), used for human present/not-present trigger
 - **Touchscreen UI:** LVGL based menu with on screen controls, rendered on ILI9341
 - **Flash encryption:** AES-256-XTS, key generated and burned to eFuse on device
-- **Secure boot:** Secure Boot V2 with RSA-3072 signed bootloader and application partition
+- **Secure boot:** Secure Boot V2 with ECDSA signed bootloader and application partition
 
 ---
 
 ## Security
 
-Both flash encryption and secure boot are configured via eFuse and are irreversible in production mode. Development mode is used during active development to allow re-flashing.
-
 - **Flash Encryption:** AES-256-XTS. Key generated on device, never exposed.
-- **Secure Boot V2:** RSA-3072. Bootloader and application partition signed. Public key digest burned to eFuse.
+- **Secure Boot:** Uses ECDSA. Bootloader and application partition signed. Public key digest burned to eFuse.
 
 ---
 
 ## Build
 
-Requires ESP-IDF v6.x installed via EIM.
+Requires ESP-IDF v6.0.1
 
 ```bash
-idf.py set-target esp32s3
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+To build the tests
+
+```bash
+cd tests
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
