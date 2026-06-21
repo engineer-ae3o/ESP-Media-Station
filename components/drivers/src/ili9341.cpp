@@ -226,10 +226,6 @@ namespace disp {
             return ESP_ERR_INVALID_STATE;
         }
 
-        if (level > 100) {
-            return ESP_ERR_INVALID_ARG;
-        }
-
         TRY(ledc_set_duty(LEDC_LOW_SPEED_MODE, m_config.led_ledc_channel, level));
         TRY(ledc_update_duty(LEDC_LOW_SPEED_MODE, m_config.led_ledc_channel));
 
