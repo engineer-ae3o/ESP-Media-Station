@@ -30,11 +30,11 @@ namespace amp {
     };
 
     struct config_t {
-        gpio_num_t bclk{GPIO_NUM_NC};
-        gpio_num_t data{GPIO_NUM_NC};
-        gpio_num_t gain{GPIO_NUM_NC};
-        gpio_num_t ws{GPIO_NUM_NC};
-        gpio_num_t sd{GPIO_NUM_NC};
+        gpio_num_t bclk_pin{GPIO_NUM_NC};
+        gpio_num_t dout_pin{GPIO_NUM_NC};
+        gpio_num_t gain_pin{GPIO_NUM_NC};
+        gpio_num_t ws_pin{GPIO_NUM_NC};
+        gpio_num_t sd_pin{GPIO_NUM_NC};
     };
 
     template<gain_t gain, mode_t mode, bool use_gain_pin = true>
@@ -128,9 +128,9 @@ namespace amp {
                 .gpio_cfg =
                     {
                         .mclk = I2S_GPIO_UNUSED,
-                        .bclk = m_config.bclk,
-                        .ws   = m_config.ws,
-                        .dout = m_config.data,
+                        .bclk = m_config.bclk_pin,
+                        .ws   = m_config.ws_pin,
+                        .dout = m_config.dout_pin,
                         .din  = I2S_GPIO_UNUSED,
                         .invert_flags =
                             {
@@ -146,7 +146,7 @@ namespace amp {
             if constexpr (use_gain_pin) {
                 // Configure the gain gpio pin of the MAX98357 amplifier
                 const gpio_config_t gain_pin_config = {
-                    .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.gain)),
+                    .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.gain_pin)),
                     .mode         = GPIO_MODE_OUTPUT,
                     .pull_up_en   = GPIO_PULLUP_DISABLE,
                     .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -161,11 +161,11 @@ namespace amp {
                 // LOW on the gain pin with a 100k-ohm resistor gives a gain of 15dB
                 // To get a gain of either 3dB or 15dB, the resistor will have tobe put in place
                 if constexpr (gain == gain_t::dB_3 || gain == gain_t::dB_6) {
-                    gpio_set_level(m_config.gain, 1);
+                    gpio_set_level(m_config.gain_pin, 1);
                 } else if constexpr (gain == gain_t::dB_9) {
-                    gpio_reset_pin(m_config.gain);
+                    gpio_reset_pin(m_config.gain_pin);
                 } else if constexpr (gain == gain_t::dB_12 || gain == gain_t::dB_15) {
-                    gpio_set_level(m_config.gain, 0);
+                    gpio_set_level(m_config.gain_pin, 0);
                 } else {
                     static_assert(false, "Invalid gain on the MAX98357");
                 }
@@ -206,7 +206,7 @@ namespace amp {
                     // For the MAX98357, if we want to use the left channel, we don't have to connect any
                     // external resistors. Instead, we just drive the pin HIGH dircetly to enable it.
                     const gpio_config_t sd_pin_config = {
-                        .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd)),
+                        .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd_pin)),
                         .mode         = GPIO_MODE_OUTPUT,
                         .pull_up_en   = GPIO_PULLUP_DISABLE,
                         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -215,7 +215,7 @@ namespace amp {
                     // Enable the I2S channel before powering on the MAX98357
                     TRY(i2s_channel_enable(m_handle));
                     TRY(gpio_config(&sd_pin_config));
-                    gpio_set_level(m_config.sd, 1);
+                    gpio_set_level(m_config.sd_pin, 1);
 
                 } else if constexpr (mode == mode_t::RIGHT_CHANNEL || mode == mode_t::STEREO) {
                     // Whereas if we wanted to use the right channel or stereo modes, we would have to connect
@@ -223,7 +223,7 @@ namespace amp {
                     // 1/2 * Vdd and 1/3 * Vdd respectively, which is what the MAX98357 needs to use right or mixed
                     // stereo mode. We also have to make the pins input to prevent the mESP32 from driving the pin.
                     const gpio_config_t sd_pin_config = {
-                        .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd)),
+                        .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd_pin)),
                         .mode         = GPIO_MODE_INPUT,
                         .pull_up_en   = GPIO_PULLUP_DISABLE,
                         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -240,7 +240,7 @@ namespace amp {
             } else {
                 // To power down the MAX98357, we can just drive the SD pin low.
                 const gpio_config_t sd_pin_config = {
-                    .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd)),
+                    .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd_pin)),
                     .mode         = GPIO_MODE_OUTPUT,
                     .pull_up_en   = GPIO_PULLUP_DISABLE,
                     .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -248,7 +248,7 @@ namespace amp {
                 };
                 // Power off the MAX98357 before disabling the I2S channel
                 TRY(gpio_config(&sd_pin_config));
-                gpio_set_level(m_config.sd, 0);
+                gpio_set_level(m_config.sd_pin, 0);
                 TRY(i2s_channel_disable(m_handle));
             }
 
@@ -311,7 +311,7 @@ namespace amp {
             }
 
             {
-                auto err_ret = gpio_reset_pin(m_config.sd);
+                auto err_ret = gpio_reset_pin(m_config.sd_pin);
                 if (err_ret != ESP_OK) {
                     ESP_LOGE(TAG, "Error resetting the SD pin: %s", esp_err_to_name(err_ret));
                     ret = err_ret;
@@ -319,7 +319,7 @@ namespace amp {
             }
 
             if constexpr (use_gain_pin) {
-                auto err_ret = gpio_reset_pin(m_config.gain);
+                auto err_ret = gpio_reset_pin(m_config.gain_pin);
                 if (err_ret != ESP_OK) {
                     ESP_LOGE(TAG, "Error resetting gain pin: %s", esp_err_to_name(err_ret));
                     ret = err_ret;

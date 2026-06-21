@@ -26,15 +26,16 @@ namespace disp {
         m_config = config;
 
         // Configure DC and RESET pins
-        const gpio_config_t io_conf = {
-            .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.dc) | 1ULL << std::to_underlying(m_config.rst)),
+        const gpio_config_t pin_config = {
+            .pin_bit_mask =
+                static_cast<uint64_t>(1ULL << std::to_underlying(m_config.dc_pin) | 1ULL << std::to_underlying(m_config.rst_pin)),
             .mode         = GPIO_MODE_OUTPUT,
             .pull_up_en   = GPIO_PULLUP_DISABLE,
             .pull_down_en = GPIO_PULLDOWN_DISABLE,
             .intr_type    = GPIO_INTR_DISABLE,
         };
 
-        auto ret = gpio_config(&io_conf);
+        auto ret = gpio_config(&pin_config);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to configure RST and DC pins: %s", esp_err_to_name(ret));
             return ret;
@@ -53,7 +54,7 @@ namespace disp {
             .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
             .input_delay_ns   = 0,
             .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
-            .spics_io_num     = m_config.cs,
+            .spics_io_num     = m_config.cs_pin,
             .flags            = 0,
             .queue_size       = TRANS_QUEUE_SIZE,
             .pre_cb           = nullptr,
@@ -69,15 +70,15 @@ namespace disp {
 
         // Hardware reset
         // Toggle the reset pin
-        gpio_set_level(m_config.rst, 0);
+        gpio_set_level(m_config.rst_pin, 0);
         vTaskDelay(pdMS_TO_TICKS(10));
-        gpio_set_level(m_config.rst, 1);
+        gpio_set_level(m_config.rst_pin, 1);
         vTaskDelay(pdMS_TO_TICKS(120));
 
-        // Send initialization sequence to ili9341
+        // Send initialization sequence to the ili9341
         ret = init_sequence();
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to transmit initialization sequence: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to transmit the initialization sequence: %s", esp_err_to_name(ret));
             cleanup_resources();
             return ret;
         }
@@ -186,8 +187,8 @@ namespace disp {
             spi_bus_remove_device(m_device_handle);
             m_device_handle = nullptr;
         }
-        gpio_reset_pin(m_config.dc);
-        gpio_reset_pin(m_config.rst);
+        gpio_reset_pin(m_config.dc_pin);
+        gpio_reset_pin(m_config.rst_pin);
         m_config = {};
     }
 
@@ -307,7 +308,7 @@ namespace disp {
 
     esp_err_t ili9341_t::send_cmd(uint8_t cmd) {
 
-        gpio_set_level(m_config.dc, 0); // Command mode
+        gpio_set_level(m_config.dc_pin, 0); // Command mode
 
         spi_transaction_t trans = {
             .flags            = 0,
@@ -352,7 +353,7 @@ namespace disp {
 
     esp_err_t ili9341_t::send_data(std::span<const uint8_t> data) {
 
-        gpio_set_level(m_config.dc, 1); // Data mode
+        gpio_set_level(m_config.dc_pin, 1); // Data mode
 
         spi_transaction_t trans = {
             .flags            = 0,

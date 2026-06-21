@@ -77,10 +77,10 @@ namespace mic {
             .gpio_cfg =
                 {
                     .mclk = I2S_GPIO_UNUSED,
-                    .bclk = m_config.bclk,
-                    .ws   = m_config.ws,
+                    .bclk = m_config.bclk_pin,
+                    .ws   = m_config.ws_pin,
                     .dout = I2S_GPIO_UNUSED,
-                    .din  = m_config.data,
+                    .din  = m_config.din_pin,
                     .invert_flags =
                         {
                             .mclk_inv = false,
@@ -93,7 +93,8 @@ namespace mic {
 
         // Configure the CHIPEN and L/R pins
         const gpio_config_t io_conf = {
-            .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.chip_en) | 1ULL << std::to_underlying(m_config.l_r)),
+            .pin_bit_mask =
+                static_cast<uint64_t>(1ULL << std::to_underlying(m_config.chip_en_pin) | 1ULL << std::to_underlying(m_config.l_r_pin)),
             .mode         = GPIO_MODE_OUTPUT,
             .pull_up_en   = GPIO_PULLUP_DISABLE,
             .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -103,7 +104,7 @@ namespace mic {
 
         // Set whether to use the right channel of the INMP441
         // HIGH on the l_r pin makes the INMP441 output on the right channel
-        gpio_set_level(m_config.l_r, m_config.use_right_chan);
+        gpio_set_level(m_config.l_r_pin, m_config.use_right_chan);
 
         // Allocate the buffers
         m_buf1 = static_cast<int32_t*>(heap_caps_malloc(RECV_BUF_SIZE_BYTES, (MALLOC_CAP_32BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM)));
@@ -115,7 +116,7 @@ namespace mic {
         }
 
         // Enable the INMP441 with the CHIPEN pin
-        gpio_set_level(m_config.chip_en, 1);
+        gpio_set_level(m_config.chip_en_pin, 1);
         TRY_WITH_FUNC(i2s_channel_enable(m_handle), cleanup());
 
         // The INMP441 requires around 90ms after startup to fully stabilize
@@ -144,14 +145,14 @@ namespace mic {
 
         if (on) {
             // If we are enabling, a delay of ~45ms is mandatory to allow the INMP441 fully stabilize
-            gpio_set_level(m_config.chip_en, 1);
+            gpio_set_level(m_config.chip_en_pin, 1);
             vTaskDelay(pdMS_TO_TICKS(45));
             // Enable the I2S channel after the INMP441 is fully powered
             TRY(i2s_channel_enable(m_handle));
         } else {
             // Disable the I2S channel before we disable the INMP441
             TRY(i2s_channel_disable(m_handle));
-            gpio_set_level(m_config.chip_en, 0);
+            gpio_set_level(m_config.chip_en_pin, 0);
         }
         m_is_enabled = on;
 
@@ -242,7 +243,7 @@ namespace mic {
                 ret = err_ret;
             }
 
-            err_ret = gpio_set_level(m_config.chip_en, 0);
+            err_ret = gpio_set_level(m_config.chip_en_pin, 0);
             if (err_ret != ESP_OK) {
                 ESP_LOGE(TAG, "Error setting the CHIPEN pin low to disable the INMP441: %s", esp_err_to_name(err_ret));
                 ret = err_ret;
@@ -251,13 +252,13 @@ namespace mic {
             }
         }
 
-        err_ret = gpio_reset_pin(m_config.chip_en);
+        err_ret = gpio_reset_pin(m_config.chip_en_pin);
         if (err_ret != ESP_OK) {
             ESP_LOGE(TAG, "Error deinitializing the CHIPEN pin: %s", esp_err_to_name(err_ret));
             ret = err_ret;
         }
 
-        err_ret = gpio_reset_pin(m_config.l_r);
+        err_ret = gpio_reset_pin(m_config.l_r_pin);
         if (err_ret != ESP_OK) {
             ESP_LOGE(TAG, "Error deinitializing the L/R pin: %s", esp_err_to_name(err_ret));
             ret = err_ret;

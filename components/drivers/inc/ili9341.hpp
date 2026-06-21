@@ -9,23 +9,15 @@
 
 namespace disp {
 
-    constexpr auto MAX_WIDTH{240U};
-    constexpr auto MAX_HEIGHT{320U};
-
-    constexpr auto TIMEOUT_MS{50U};
-    constexpr auto TRANS_QUEUE_SIZE{5U};
-
-    constexpr auto* TAG{"ILI9341"};
-
     struct config_t {
         // SPI configuration
         spi_host_device_t spi_host{};
         uint32_t          spi_clock_speed_hz{};
 
         // GPIO pins
-        gpio_num_t cs{GPIO_NUM_NC};
-        gpio_num_t dc{GPIO_NUM_NC};
-        gpio_num_t rst{GPIO_NUM_NC};
+        gpio_num_t cs_pin{GPIO_NUM_NC};
+        gpio_num_t dc_pin{GPIO_NUM_NC};
+        gpio_num_t rst_pin{GPIO_NUM_NC};
 
         // Display parameter
         uint8_t rotation{}; // 0-3 for different orientations
@@ -37,6 +29,14 @@ namespace disp {
 
     class ili9341_t {
     public:
+        constexpr static auto MAX_WIDTH{240U};
+        constexpr static auto MAX_HEIGHT{320U};
+
+        constexpr static auto TIMEOUT_MS{50U};
+        constexpr static auto TRANS_QUEUE_SIZE{5U};
+
+        constexpr static auto* TAG{"ILI9341"};
+
         ili9341_t() = default;
         ~ili9341_t() noexcept;
 
@@ -52,10 +52,19 @@ namespace disp {
          * 
          * @return ESP_OK on success, error code otherwise.
          */
+        [[nodiscard]] esp_err_t init_spi_bus(const bus_config_t& config);
+
+        /**
+         * @brief Initialize the ili9341 driver.
+         *
+         * @param[in] config Reference to struct containing driver configuration.
+         * 
+         * @return ESP_OK on success, error code otherwise.
+         */
         [[nodiscard]] esp_err_t init(const config_t& config);
 
         /**
-         * @brief Deinitialize ili9341 driver and free resources.
+         * @brief Deinitialize the ili9341 driver and free resources.
          *
          * @return ESP_OK on success, error code otherwise.
          */
