@@ -13,7 +13,7 @@
 #include <utility>
 #include <cstdint>
 
-namespace amp {
+namespace audio::amp {
 
     enum class gain_t : uint8_t {
         dB_3  = 3,  // 3dB
@@ -333,4 +333,4 @@ namespace amp {
         }
     };
 
-} // namespace amp
+} // namespace audio::amp

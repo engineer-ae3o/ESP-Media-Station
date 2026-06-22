@@ -5,7 +5,6 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
-#include "hal/ledc_types.h"
 #include "max98357.hpp"
 #include "inmp441.hpp"
 #include "ili9341.hpp"
@@ -55,7 +54,7 @@ namespace {
         (void)arg;
 
         // Initialize the MAX98357A audio amplifier
-        constexpr amp::config_t max_config = {
+        constexpr audio::amp::config_t max_config = {
             .bclk_pin = config::MAX_BCLK,
             .dout_pin = config::MAX_DATA,
             .gain_pin = config::MAX_GAIN,
@@ -63,12 +62,12 @@ namespace {
             .sd_pin   = config::MAX_SD,
         };
 
-        amp::max98357a_t<amp::gain_t::dB_12, amp::mode_t::LEFT_CHANNEL> max98357;
-        ESP_ERROR_CHECK(max98357.init(max_config));
-        ESP_ERROR_CHECK(max98357.power_on());
+        audio::amp::max98357a_t<audio::amp::gain_t::dB_12, audio::amp::mode_t::LEFT_CHANNEL> amp;
+        ESP_ERROR_CHECK(amp.init(max_config));
+        ESP_ERROR_CHECK(amp.power_on());
 
         // Initialize the INMP441 microphone
-        constexpr mic::config_t inmp_config = {
+        constexpr audio::mic::config_t inmp_config = {
             .use_right_chan = false,
             .error_cb       = nullptr,
             .chip_en_pin    = config::INMP_CHIPEN,
@@ -78,8 +77,8 @@ namespace {
             .ws_pin         = config::INMP_WS,
         };
 
-        mic::inmp441_t inmp441;
-        ESP_ERROR_CHECK(inmp441.init(inmp_config));
+        audio::mic::inmp441_t mic;
+        ESP_ERROR_CHECK(mic.init(inmp_config));
 
         while (true) {
             vTaskDelay(pdMS_TO_TICKS(1000));

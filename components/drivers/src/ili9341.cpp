@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 
 #include "ili9341.hpp"
+#include "soc/clk_tree_defs.h"
 #include "utils.hpp"
 
 #include "esp_attr.h"
@@ -68,7 +69,7 @@ namespace disp {
             .address_bits     = 0,
             .dummy_bits       = 0,
             .mode             = 0, // The ILI9341 accepts a CPOL-CPHA of 0-0
-            .clock_source     = SPI_CLK_SRC_DEFAULT,
+            .clock_source     = SPI_CLK_SRC_APB,
             .duty_cycle_pos   = 128, // A duty cycle on the positive clock of 50%/50%
             .cs_ena_pretrans  = 0,
             .cs_ena_posttrans = 0,
@@ -209,7 +210,7 @@ namespace disp {
             .duty_resolution = LED_LEDC_TIMER_RES,
             .timer_num       = timer,
             .freq_hz         = LED_LEDC_TIMER_FREQ_HZ,
-            .clk_cfg         = LEDC_AUTO_CLK,
+            .clk_cfg         = LEDC_USE_APB_CLK,
             .deconfigure     = false,
         };
 

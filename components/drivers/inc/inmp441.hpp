@@ -12,7 +12,7 @@
 #include <utility>
 #include <expected>
 
-namespace mic {
+namespace audio::mic {
 
     struct config_t {
         bool use_right_chan{};
@@ -177,4 +177,4 @@ namespace mic {
         }};
     };
 
-} // namespace mic
+} // namespace audio::mic

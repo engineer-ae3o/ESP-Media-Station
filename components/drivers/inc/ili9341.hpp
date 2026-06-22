@@ -107,7 +107,7 @@ namespace disp {
          * @brief Help with the initialization of the timer to be used for the Ledc channel.
          *
          * @param timer Timer to use for the Ledc channel.
-         * @param init  Whether or not to initiaize of deinitialize the Ledc timer.
+         * @param init  Whether or not to initiaize or deinitialize the Ledc timer.
          * 
          * @return ESP_OK on success, error code otherwise.
          */

@@ -8,7 +8,7 @@
 #include <atomic>
 #include <utility>
 
-namespace mic {
+namespace audio::mic {
 
     // Public API
     inmp441_t::~inmp441_t() noexcept {
@@ -420,4 +420,4 @@ namespace mic {
         }
     }
 
-} // namespace mic
+} // namespace audio::mic
