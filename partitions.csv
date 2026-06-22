@@ -3,3 +3,4 @@
   nvs,       data,  nvs,      0x9000,   64K,
   phy_init,  data,  phy,      ,         32K,
   factory,   app,   factory,  ,         2M,
+  storage,   data,  littlefs, ,         4M,
