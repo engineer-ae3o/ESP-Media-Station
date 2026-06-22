@@ -14,6 +14,7 @@ noExplicitConstructor
 unreachableCode
 useStlAlgorithm
 unusedFunction
+constParameterCallback
 syntaxError
 cstyleCast
 

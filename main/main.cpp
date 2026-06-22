@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
+#include "hal/ledc_types.h"
 #include "max98357.hpp"
 #include "inmp441.hpp"
 #include "ili9341.hpp"
@@ -26,13 +27,17 @@ namespace {
         constexpr disp::config_t config = {
             .spi_host           = config::LCD_SPI_BUS,
             .spi_clock_speed_hz = config::LCD_SPI_CLK_SPEED_HZ,
+            .led_pin            = config::LCD_LED_PIN,
+            .rst_pin            = config::LCD_RST_PIN,
             .cs_pin             = config::LCD_CS_PIN,
             .dc_pin             = config::LCD_DC_PIN,
-            .rst_pin            = config::LCD_RST_PIN,
             .rotation           = 0,
+            .led_ledc_timer     = LEDC_TIMER_1,
+            .led_ledc_channel   = LEDC_CHANNEL_0,
         };
 
         disp::ili9341_t display;
+        ESP_ERROR_CHECK(disp::ili9341_t::init_ledc_timer(LEDC_TIMER_1));
         ESP_ERROR_CHECK(display.init(config));
 
         uint16_t color{0xF100}; // Start at RED

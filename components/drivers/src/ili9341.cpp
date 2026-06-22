@@ -25,6 +25,26 @@ namespace disp {
 
         m_config = config;
 
+        // Initialize the Ledc channel to use to control the LED for PWM
+        const ledc_channel_config_t ledc_chan_config = {
+            .gpio_num    = std::to_underlying(m_config.led_pin),
+            .speed_mode  = LEDC_LOW_SPEED_MODE,
+            .channel     = m_config.led_ledc_channel,
+            .intr_type   = LEDC_INTR_DISABLE, // Deprecated, but here to satisfy the compiler
+            .timer_sel   = m_config.led_ledc_timer,
+            .duty        = LEDC_RES_MAX_VAL,
+            .hpoint      = LEDC_RES_MAX_VAL - 1,
+            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
+            .flags       = {.output_invert = 0},
+            .deconfigure = false,
+        };
+
+        auto ret = ledc_channel_config(&ledc_chan_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to intialize the Ledc channel: %s", esp_err_to_name(ret));
+            return ret;
+        }
+
         // Configure DC and RESET pins
         const gpio_config_t pin_config = {
             .pin_bit_mask =
@@ -35,9 +55,10 @@ namespace disp {
             .intr_type    = GPIO_INTR_DISABLE,
         };
 
-        auto ret = gpio_config(&pin_config);
+        ret = gpio_config(&pin_config);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to configure RST and DC pins: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to configure the reset and D/C gpio pins: %s", esp_err_to_name(ret));
+            cleanup_resources();
             return ret;
         }
 
@@ -48,7 +69,7 @@ namespace disp {
             .dummy_bits       = 0,
             .mode             = 0, // The ILI9341 accepts a CPOL-CPHA of 0-0
             .clock_source     = SPI_CLK_SRC_DEFAULT,
-            .duty_cycle_pos   = 128, // Default param
+            .duty_cycle_pos   = 128, // A duty cycle on the positive clock of 50%/50%
             .cs_ena_pretrans  = 0,
             .cs_ena_posttrans = 0,
             .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
@@ -79,26 +100,6 @@ namespace disp {
         ret = init_sequence();
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to transmit the initialization sequence: %s", esp_err_to_name(ret));
-            cleanup_resources();
-            return ret;
-        }
-
-        // Initialize the Ledc channel to use to control the LED for PWM
-        const ledc_channel_config_t ledc_chan_config = {
-            .gpio_num    = std::to_underlying(m_config.led_pin),
-            .speed_mode  = LEDC_LOW_SPEED_MODE,
-            .channel     = m_config.led_ledc_channel,
-            .timer_sel   = m_config.led_ledc_timer,
-            .duty        = LEDC_RES_MAX_VAL,
-            .hpoint      = LEDC_RES_MAX_VAL - 1,
-            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
-            .flags       = {.output_invert = 0},
-            .deconfigure = false,
-        };
-
-        ret = ledc_channel_config(&ledc_chan_config);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to intialize the Ledc channel: %s", esp_err_to_name(ret));
             cleanup_resources();
             return ret;
         }
@@ -244,6 +245,7 @@ namespace disp {
             .gpio_num    = std::to_underlying(m_config.led_pin),
             .speed_mode  = LEDC_LOW_SPEED_MODE,
             .channel     = m_config.led_ledc_channel,
+            .intr_type   = LEDC_INTR_DISABLE, // Deprecated, but here to satisfy the compiler
             .timer_sel   = m_config.led_ledc_timer,
             .duty        = LEDC_RES_MAX_VAL,
             .hpoint      = LEDC_RES_MAX_VAL - 1,

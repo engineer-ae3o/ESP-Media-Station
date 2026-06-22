@@ -13,6 +13,7 @@ namespace config {
     constexpr inline gpio_num_t LCD_CLK_PIN  = GPIO_NUM_12;
     constexpr inline gpio_num_t LCD_DC_PIN   = GPIO_NUM_18;
     constexpr inline gpio_num_t LCD_CS_PIN   = GPIO_NUM_10;
+    constexpr inline gpio_num_t LCD_LED_PIN  = GPIO_NUM_14;
 
     constexpr inline spi_host_device_t LCD_SPI_BUS          = SPI2_HOST;
     constexpr inline uint32_t          LCD_SPI_CLK_SPEED_HZ = 40'000'000U;
