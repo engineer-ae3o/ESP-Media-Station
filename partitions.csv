@@ -1,6 +1,6 @@
 # Partition table to enable use of the flash
 # Name,      Type,  Subtype,  Offset,   Size, Flags
-  nvs,       data,  nvs,      0x9000,   64K,
-  phy_init,  data,  phy,      ,         32K,
+  nvs,       data,  nvs,      0x9000,   128K,
+  phy_init,  data,  phy,      ,         64K,
   factory,   app,   factory,  ,         2M,
   storage,   data,  littlefs, ,         4M,

@@ -45,7 +45,7 @@ namespace utils {
             .data7_io_num          = GPIO_NUM_NC,
             .data_io_default_level = false,
             .max_transfer_sz       = max_trans_size,
-            .flags                 = (SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS | SPICOMMON_BUSFLAG_SLP_ALLOW_PD),
+            .flags                 = (SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS),
             .isr_cpu_id            = ESP_INTR_CPU_AFFINITY_AUTO,
             .intr_flags            = 0,
         };

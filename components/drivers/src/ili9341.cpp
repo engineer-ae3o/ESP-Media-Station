@@ -2,7 +2,6 @@
 #include "freertos/task.h"
 
 #include "ili9341.hpp"
-#include "soc/clk_tree_defs.h"
 #include "utils.hpp"
 
 #include "esp_attr.h"
@@ -35,7 +34,7 @@ namespace disp {
             .timer_sel   = m_config.led_ledc_timer,
             .duty        = LEDC_RES_MAX_VAL,
             .hpoint      = LEDC_RES_MAX_VAL - 1,
-            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
+            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
             .flags       = {.output_invert = 0},
             .deconfigure = false,
         };
@@ -75,7 +74,7 @@ namespace disp {
             .cs_ena_posttrans = 0,
             .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
             .input_delay_ns   = 0,
-            .sample_point     = SPI_SAMPLING_POINT_PHASE_1,
+            .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
             .spics_io_num     = m_config.cs_pin,
             .flags            = 0,
             .queue_size       = TRANS_QUEUE_SIZE,
