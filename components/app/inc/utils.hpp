@@ -26,12 +26,14 @@
 namespace utils {
 
     struct spi_bus_config_t {
-        gpio_num_t mosi_pin{GPIO_NUM_NC};
-        gpio_num_t miso_pin{GPIO_NUM_NC};
-        gpio_num_t sclk_pin{GPIO_NUM_NC};
+        spi_host_device_t bus{};
+        int               max_trans_size{};
+        gpio_num_t        mosi_pin{GPIO_NUM_NC};
+        gpio_num_t        miso_pin{GPIO_NUM_NC};
+        gpio_num_t        sclk_pin{GPIO_NUM_NC};
     };
 
-    [[nodiscard]] inline esp_err_t init_spi_bus(spi_host_device_t bus, int max_trans_size, const spi_bus_config_t& config) {
+    [[nodiscard]] inline esp_err_t init_spi_bus(const spi_bus_config_t& config) {
 
         const ::spi_bus_config_t bus_config = {
             .mosi_io_num           = config.mosi_pin,
@@ -44,12 +46,12 @@ namespace utils {
             .data6_io_num          = GPIO_NUM_NC,
             .data7_io_num          = GPIO_NUM_NC,
             .data_io_default_level = false,
-            .max_transfer_sz       = max_trans_size,
+            .max_transfer_sz       = config.max_trans_size,
             .flags                 = (SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS),
             .isr_cpu_id            = ESP_INTR_CPU_AFFINITY_AUTO,
             .intr_flags            = 0,
         };
-        TRY(spi_bus_initialize(bus, &bus_config, SPI_DMA_CH_AUTO));
+        TRY(spi_bus_initialize(config.bus, &bus_config, SPI_DMA_CH_AUTO));
 
         return ESP_OK;
     };

@@ -1,4 +1,4 @@
-idf_component_register(SRCS "src/rtp.cpp"
+idf_component_register(SRCS
                        INCLUDE_DIRS "inc/"
                        REQUIRES drivers freertos
 )

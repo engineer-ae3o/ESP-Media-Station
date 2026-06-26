@@ -23,13 +23,14 @@ namespace {
 
         [[maybe_unused]] constexpr auto* TAG = "DISP_CAM";
 
-        constexpr utils::spi_bus_config_t ili9341_bus_config = {
-            .mosi_pin = config::LCD_MOSI_PIN,
-            .miso_pin = GPIO_NUM_NC,
-            .sclk_pin = config::LCD_CLK_PIN,
+        constexpr utils::spi_bus_config_t bus_config = {
+            .bus            = config::LCD_SPI_BUS,
+            .max_trans_size = disp::ili9341_t::MAX_WIDTH * disp::ili9341_t::MAX_HEIGHT * 2,
+            .mosi_pin       = config::LCD_MOSI_PIN,
+            .miso_pin       = GPIO_NUM_NC,
+            .sclk_pin       = config::LCD_CLK_PIN,
         };
-        ESP_ERROR_CHECK(
-            utils::init_spi_bus(config::LCD_SPI_BUS, disp::ili9341_t::MAX_WIDTH * disp::ili9341_t::MAX_HEIGHT, ili9341_bus_config));
+        ESP_ERROR_CHECK(utils::init_spi_bus(bus_config));
 
         constexpr disp::config_t config = {
             .spi_host           = config::LCD_SPI_BUS,
@@ -38,7 +39,7 @@ namespace {
             .rst_pin            = config::LCD_RST_PIN,
             .cs_pin             = config::LCD_CS_PIN,
             .dc_pin             = config::LCD_DC_PIN,
-            .rotation           = 1,
+            .rotation           = 0,
             .led_ledc_timer     = LEDC_TIMER_0,
             .led_ledc_channel   = LEDC_CHANNEL_0,
         };

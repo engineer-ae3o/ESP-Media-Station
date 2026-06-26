@@ -17,7 +17,6 @@ The project targets intermediate ESP-IDF development and serves as a platform fo
 | Component | Details |
 | --- | --- |
 | MCU | ESP32-S3 N16R8 (16MB Flash, 8MB PSRAM) |
-| Camera | OV3660 via FPC connector (DVP interface) |
 | Display | ILI9341 320x240 TFT with resistive touch via the XPT2046 controller |
 | Audio Input | INMP441 MEMS microphone outputting PCM |
 | Audio Output | MAX98357 audio amplifier and standard 4-ohm speaker expecting PCM |
@@ -26,7 +25,6 @@ The project targets intermediate ESP-IDF development and serves as a platform fo
 
 ## Features
 
-- **Live video streaming:** MJPEG over a custom RTP/UDP implementation (RFC 2435)
 - **Two way audio:** Full duplex I2S mic input and speaker output, streamed over a separate RTP session
 - **Human presence detection:** TensorFlow Lite for Microcontrollers (INT8 quantized), used for human present/not-present trigger
 - **Touchscreen UI:** LVGL based menu with on screen controls, rendered on ILI9341

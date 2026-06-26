@@ -41,7 +41,7 @@ jobs:
             run: |
               . $IDF_PATH/export.sh
               idf.py reconfigure
-              cd tests
+              cd unity-app
               idf.py build size
               cd ..
 

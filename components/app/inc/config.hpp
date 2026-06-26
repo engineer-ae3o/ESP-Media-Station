@@ -19,11 +19,11 @@ namespace config {
     constexpr inline uint32_t          LCD_SPI_CLK_SPEED_HZ = 40'000'000U;
 
     // Pin definitions and SPI settings for the touch screen controller on the ILI9341
-    constexpr inline gpio_num_t TOUCH_MOSI_PIN = GPIO_NUM_NC;
-    constexpr inline gpio_num_t TOUCH_MISO_PIN = GPIO_NUM_NC;
-    constexpr inline gpio_num_t TOUCH_CLK_PIN  = GPIO_NUM_NC;
-    constexpr inline gpio_num_t TOUCH_CS_PIN   = GPIO_NUM_NC;
-    constexpr inline gpio_num_t TOUCH_IRQ_PIN  = GPIO_NUM_NC;
+    constexpr inline gpio_num_t TOUCH_MOSI_PIN = GPIO_NUM_15;
+    constexpr inline gpio_num_t TOUCH_MISO_PIN = GPIO_NUM_7;
+    constexpr inline gpio_num_t TOUCH_CLK_PIN  = GPIO_NUM_17;
+    constexpr inline gpio_num_t TOUCH_CS_PIN   = GPIO_NUM_16;
+    constexpr inline gpio_num_t TOUCH_IRQ_PIN  = GPIO_NUM_6;
 
     constexpr inline spi_host_device_t TOUCH_SPI_BUS          = SPI3_HOST;
     constexpr inline uint32_t          TOUCH_SPI_CLK_SPEED_HZ = 2'000'000U;
@@ -41,7 +41,5 @@ namespace config {
     constexpr inline gpio_num_t INMP_WS     = GPIO_NUM_NC;
     constexpr inline gpio_num_t INMP_CHIPEN = GPIO_NUM_NC;
     constexpr inline gpio_num_t INMP_L_R    = GPIO_NUM_NC;
-
-    // Pin definitions for the OV3660 camera on the FPC connector
 
 } // namespace config
