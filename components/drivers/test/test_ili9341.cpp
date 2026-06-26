@@ -1,4 +1,5 @@
 #include "freertos/FreeRTOS.h"
+#include "freertos/projdefs.h"
 #include "freertos/task.h"
 
 #include "unity.h"
@@ -86,6 +87,7 @@ TEST_CASE("Flush out of bounds", "[ili9341][spi]") {
 
     TEST_ESP_OK(disp::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
     TEST_ESP_OK(display.init(cfg));
+    TEST_ESP_OK(display.set_brightness());
 
     std::array<uint16_t, 1024> dummy_data{};
     dummy_data.fill(0xF800);
@@ -106,6 +108,8 @@ TEST_CASE("Flush out of bounds", "[ili9341][spi]") {
     disp::coord_t rev_x{10, 0, 5, 0};
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, display.flush(rev_x, dummy_data));
 
+    TEST_ESP_OK(display.set_brightness(0));
+
     TEST_ESP_OK(display.deinit());
     TEST_ESP_OK(disp::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, false));
 }
@@ -118,6 +122,7 @@ TEST_CASE("Flush Valid Data from PSRAM", "[ili9341][spi][psram]") {
 
     TEST_ESP_OK(disp::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
     TEST_ESP_OK(display.init(cfg));
+    TEST_ESP_OK(display.set_brightness());
 
     // Allocate a 100x100 block in PSRAM (20,000 bytes)
     constexpr size_t pixel_count = 100 * 100;
@@ -133,14 +138,17 @@ TEST_CASE("Flush Valid Data from PSRAM", "[ili9341][spi][psram]") {
 
     // Execute flush
     TEST_ESP_OK(display.flush({0, 0, 99, 99}, {buf, pixel_count}));
+    vTaskDelay(pdMS_TO_TICKS(3000));
 
     heap_caps_free(buf);
+
+    TEST_ESP_OK(display.set_brightness(0));
 
     TEST_ESP_OK(display.deinit());
     TEST_ESP_OK(disp::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, false));
 }
 
-TEST_CASE("Screen Fill", "[ili9341][spi]") {
+TEST_CASE("Screen Fill", "[ili9341][fill_screen]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     disp::ili9341_t display{};
@@ -148,9 +156,13 @@ TEST_CASE("Screen Fill", "[ili9341][spi]") {
 
     TEST_ESP_OK(disp::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
     TEST_ESP_OK(display.init(cfg));
+    TEST_ESP_OK(display.set_brightness());
 
     // Set screen to Green (little-endian conversion handled internally by set_screen)
-    TEST_ESP_OK(display.set_screen(0x07E0, true));
+    TEST_ESP_OK(display.set_screen(0x07E0));
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    TEST_ESP_OK(display.set_brightness(0));
 
     TEST_ESP_OK(display.deinit());
     TEST_ESP_OK(disp::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, false));
@@ -165,11 +177,16 @@ TEST_CASE("Backlight Brightness Control", "[ili9341][ledc]") {
     TEST_ESP_OK(disp::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
     TEST_ESP_OK(display.init(cfg));
 
+    // Arbitrary color
+    TEST_ESP_OK(display.set_screen(0x2AD4, true));
+
     // Sweep brightness levels
     for (uint16_t level{}; level <= UINT8_MAX; level++) {
         TEST_ESP_OK(display.set_brightness(static_cast<uint8_t>(level)));
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
+
+    TEST_ESP_OK(display.set_brightness(0));
 
     // Attempting to set brightness without initialized driver should fail
     TEST_ESP_OK(display.deinit());

@@ -24,16 +24,23 @@ namespace touch {
         spi_host_device_t spi_host{};
 
         uint32_t spi_clock_speed_hz{};
-        size_t   queue_size{};
+        size_t   queue_length{};
 
         // GPIO pins
         gpio_num_t cs_pin{GPIO_NUM_NC};
         gpio_num_t irq_pin{GPIO_NUM_NC};
     };
 
+    struct coord_t {
+        uint16_t x{}, y{};
+    };
+
     template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE | ESP_INTR_FLAG_LEVEL4)>
     class xpt2046_t {
     public:
+        constexpr static auto MAX_WIDTH  = 240U;
+        constexpr static auto MAX_HEIGHT = 320U;
+
         constexpr static auto TIMEOUT_MS = 50U;
 
         constexpr static auto* TAG = "XPT2046";
@@ -99,13 +106,13 @@ namespace touch {
                 .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
                 .spics_io_num     = m_config.cs_pin,
                 .flags            = 0,
-                .queue_size       = m_config.queue_size,
+                .queue_size       = m_config.queue_length,
                 .pre_cb           = nullptr,
                 .post_cb          = nullptr,
             };
             TRY_WITH_FUNC(spi_bus_add_device(m_config.spi_host, &device_config, &m_device_handle), cleanup_resources());
 
-            m_event_queue = xQueueCreate(m_config.queue_size, 1);
+            m_event_queue = xQueueCreate(m_config.queue_length, sizeof(coord_t));
             if (!m_event_queue) {
                 cleanup_resources();
                 return ESP_ERR_NO_MEM;

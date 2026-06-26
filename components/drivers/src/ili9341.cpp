@@ -215,6 +215,7 @@ namespace disp {
 
         if (!init) {
             led_timer_config.deconfigure = true;
+            TRY(ledc_timer_pause(LEDC_LOW_SPEED_MODE, timer));
         }
 
         TRY(ledc_timer_config(&led_timer_config));
