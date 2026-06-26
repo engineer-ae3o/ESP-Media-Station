@@ -1,5 +1,9 @@
 #pragma once
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 
@@ -11,13 +15,16 @@
 #include <span>
 #include <cstdint>
 #include <utility>
+#include <expected>
 
 namespace touch {
 
     struct config_t {
         // SPI configuration
         spi_host_device_t spi_host{};
-        uint32_t          spi_clock_speed_hz{};
+
+        uint32_t spi_clock_speed_hz{};
+        size_t   queue_size{};
 
         // GPIO pins
         gpio_num_t cs_pin{GPIO_NUM_NC};
@@ -27,8 +34,7 @@ namespace touch {
     template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE | ESP_INTR_FLAG_LEVEL4)>
     class xpt2046_t {
     public:
-        constexpr static auto TIMEOUT_MS       = 50U;
-        constexpr static auto TRANS_QUEUE_SIZE = 5U;
+        constexpr static auto TIMEOUT_MS = 50U;
 
         constexpr static auto* TAG = "XPT2046";
 
@@ -79,7 +85,7 @@ namespace touch {
             TRY_WITH_FUNC(gpio_isr_handler_add(m_config.irq_pin, irq_pin_handler, this), cleanup_resources());
 
             // Configure the XPT2046 as an SPI device
-            const spi_device_interface_config_t dev_cfg = {
+            const spi_device_interface_config_t device_config = {
                 .command_bits     = 0,
                 .address_bits     = 0,
                 .dummy_bits       = 0,
@@ -90,17 +96,20 @@ namespace touch {
                 .cs_ena_posttrans = 0,
                 .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
                 .input_delay_ns   = 0,
-                .sample_point     = SPI_SAMPLING_POINT_PHASE_1,
+                .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
                 .spics_io_num     = m_config.cs_pin,
                 .flags            = 0,
-                .queue_size       = TRANS_QUEUE_SIZE,
+                .queue_size       = m_config.queue_size,
                 .pre_cb           = nullptr,
                 .post_cb          = nullptr,
             };
-            TRY_WITH_FUNC(spi_bus_add_device(m_config.spi_host, &dev_cfg, &m_device_handle), cleanup_resources());
+            TRY_WITH_FUNC(spi_bus_add_device(m_config.spi_host, &device_config, &m_device_handle), cleanup_resources());
 
-            // Send the initialization sequence to the XPT2046
-            TRY_WITH_FUNC(init_sequence(), cleanup_resources());
+            m_event_queue = xQueueCreate(m_config.queue_size, 1);
+            if (!m_event_queue) {
+                cleanup_resources();
+                return ESP_ERR_NO_MEM;
+            }
 
             m_is_initialized = true;
             ESP_LOGI(TAG, "Initialization complete");
@@ -118,50 +127,53 @@ namespace touch {
                 return ESP_ERR_INVALID_STATE;
             }
 
-            auto ret = cleanup_resources();
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to cleanup used resources (deinit()): %s", esp_err_to_name(ret));
-                return ret;
-            }
+            cleanup_resources();
 
-            m_is_initialized = false;
             return ESP_OK;
+        }
+
+        /**
+         * @brief Gets the queue into which events are pushed into upon a touch detection.
+         *
+         * @return The event queue. Pretty straightforward.
+         */
+        [[nodiscard]] std::expected<QueueHandle_t, esp_err_t> get_event_queue() const {
+            if (!m_is_initialized) {
+                return std::unexpected(ESP_ERR_INVALID_STATE);
+            }
+            return m_event_queue;
         }
 
     private:
-        bool                m_is_initialized{};
-        config_t            m_config{};
+        bool     m_is_initialized{};
+        config_t m_config{};
+
         spi_device_handle_t m_device_handle{};
+        QueueHandle_t       m_event_queue{};
 
         // Helpers
-        [[nodiscard]] esp_err_t init_sequence() {
-            return ESP_OK;
-        }
-
-        [[nodiscard]] esp_err_t cleanup_resources() {
-
+        void cleanup_resources() {
             if (m_device_handle) {
                 spi_bus_remove_device(m_device_handle);
                 m_device_handle = nullptr;
             }
 
-            auto ret = gpio_isr_handler_remove(m_config.irq_pin);
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to remove the ISR handler on the irq pin: %s", esp_err_to_name(ret));
-            }
+            gpio_isr_handler_remove(m_config.irq_pin);
+            gpio_reset_pin(m_config.irq_pin);
+            gpio_reset_pin(m_config.cs_pin);
 
             if constexpr (init_gpio_isr_service) {
-                // Install the global gpio ISR service
-                ret = gpio_uninstall_isr_service();
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to remove the global gpio ISR service: %s", esp_err_to_name(ret));
-                }
+                // Uninstall the global gpio ISR service
+                gpio_uninstall_isr_service();
             }
 
-            gpio_reset_pin(m_config.irq_pin);
+            if (m_event_queue) {
+                vQueueDelete(m_event_queue);
+                m_event_queue = nullptr;
+            }
 
+            m_config         = {};
             m_is_initialized = false;
-            return ret;
         }
 
         [[nodiscard]] esp_err_t send_cmd(uint8_t cmd) {
