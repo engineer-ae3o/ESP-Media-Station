@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/timers.h"
 
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
@@ -10,6 +11,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
+#include "portmacro.h"
 #include "utils.hpp"
 
 #include <span>
@@ -23,7 +25,7 @@ namespace touch {
         // SPI configuration
         spi_host_device_t spi_host{};
 
-        uint32_t spi_clock_speed_hz{};
+        uint32_t clock_freq_hz{};
         size_t   queue_length{};
 
         // GPIO pins
@@ -48,9 +50,11 @@ namespace touch {
         xpt2046_t() = default;
 
         ~xpt2046_t() noexcept {
-            auto ret = cleanup_resources();
-            if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to cleanup used resources (destructor): %s", esp_err_to_name(ret));
+            if (m_is_initialized) {
+                auto ret = cleanup_resources();
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to properly cleanup used resources before going out of scope: %s", esp_err_to_name(ret));
+                }
             }
         }
 
@@ -89,7 +93,7 @@ namespace touch {
             }
 
             // Add the ISR for the IRQ pin
-            TRY_WITH_FUNC(gpio_isr_handler_add(m_config.irq_pin, irq_pin_handler, this), cleanup_resources());
+            TRY_WITH_FUNC(gpio_isr_handler_add(m_config.irq_pin, irq_handler, this), cleanup_resources());
 
             // Configure the XPT2046 as an SPI device
             const spi_device_interface_config_t device_config = {
@@ -101,7 +105,7 @@ namespace touch {
                 .duty_cycle_pos   = 128, // A duty cycle on the positive clock of 50%/50%
                 .cs_ena_pretrans  = 0,
                 .cs_ena_posttrans = 0,
-                .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
+                .clock_speed_hz   = static_cast<int>(m_config.clock_freq_hz),
                 .input_delay_ns   = 0,
                 .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
                 .spics_io_num     = m_config.cs_pin,
@@ -112,8 +116,10 @@ namespace touch {
             };
             TRY_WITH_FUNC(spi_bus_add_device(m_config.spi_host, &device_config, &m_device_handle), cleanup_resources());
 
+            m_conv_timer  = xTimerCreate("Conversion Timer", pdMS_TO_TICKS(TIMEOUT_MS), pdFALSE, this, conv_timer);
             m_event_queue = xQueueCreate(m_config.queue_length, sizeof(coord_t));
-            if (!m_event_queue) {
+
+            if (!m_event_queue || !m_conv_timer) {
                 cleanup_resources();
                 return ESP_ERR_NO_MEM;
             }
@@ -156,7 +162,9 @@ namespace touch {
         config_t m_config{};
 
         spi_device_handle_t m_device_handle{};
-        QueueHandle_t       m_event_queue{};
+
+        TimerHandle_t m_conv_timer{};
+        QueueHandle_t m_event_queue{};
 
         // Helpers
         void cleanup_resources() {
@@ -174,6 +182,12 @@ namespace touch {
                 gpio_uninstall_isr_service();
             }
 
+            if (m_conv_timer) {
+                xTimerStop(m_conv_timer, portMAX_DELAY);
+                xTimerDelete(m_conv_timer, portMAX_DELAY);
+                m_conv_timer = nullptr;
+            }
+
             if (m_event_queue) {
                 vQueueDelete(m_event_queue);
                 m_event_queue = nullptr;
@@ -183,16 +197,35 @@ namespace touch {
             m_is_initialized = false;
         }
 
-        [[nodiscard]] esp_err_t send_cmd(uint8_t cmd) {
-            return ESP_OK;
-        }
-
-        [[nodiscard]] esp_err_t send_data(std::span<const uint8_t> data) {
-            return ESP_OK;
-        }
-
-        IRAM_ATTR static void irq_pin_handler(void* arg) {
+        static void IRAM_ATTR irq_handler(void* arg) {
             auto* driver = static_cast<xpt2046_t*>(arg);
+
+            // Mask interrupts on the irq pin to prevent false positives during conversion
+            gpio_intr_disable(driver->m_config.irq_pin);
+
+            // Enable the conversion timer
+            BaseType_t higher_priority_task_woken{pdFALSE};
+            xTimerStartFromISR(driver->m_conv_timer, &higher_priority_task_woken);
+
+            if (higher_priority_task_woken == pdTRUE) {
+                portYIELD_FROM_ISR();
+            }
+        }
+
+        static void IRAM_ATTR conv_timer(TimerHandle_t handle) {
+            auto* driver = static_cast<xpt2046_t*>(pvTimerGetTimerID(handle));
+
+            // TODO: Handle ADC conversion and mapping to coordinates logic
+            coord_t coord{};
+
+            // Enable the interrupt only after we are done with conversion
+            gpio_intr_enable(driver->m_config.irq_pin);
+
+            // Push coordinate of press to the event queue
+            auto ret = xQueueSend(driver->m_event_queue, &coord, 0);
+            if (ret == pdPASS) {
+                portYIELD();
+            }
         }
     };
 
