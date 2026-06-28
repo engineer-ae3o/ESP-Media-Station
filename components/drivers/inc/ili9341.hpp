@@ -41,16 +41,6 @@ namespace disp {
         constexpr static auto MAX_WIDTH  = 240U;
         constexpr static auto MAX_HEIGHT = 320U;
 
-        constexpr static auto TIMEOUT_MS       = 50U;
-        constexpr static auto TRANS_QUEUE_SIZE = 5U;
-
-        constexpr static auto LED_LEDC_TIMER_RES     = LEDC_TIMER_8_BIT;
-        constexpr static auto LED_LEDC_TIMER_FREQ_HZ = 20'000U;
-
-        constexpr static auto LEDC_RES_MAX_VAL = 1 << std::to_underlying(LED_LEDC_TIMER_RES);
-
-        constexpr static auto* TAG{"ILI9341"};
-
         ili9341_t() = default;
         ~ili9341_t() noexcept;
 
@@ -126,6 +116,15 @@ namespace disp {
         bool                m_is_initialized{};
         config_t            m_config{};
         spi_device_handle_t m_device_handle{};
+
+        constexpr static auto TIMEOUT_MS       = 50U;
+        constexpr static auto TRANS_QUEUE_SIZE = 5U;
+
+        constexpr static auto LED_LEDC_TIMER_RES     = LEDC_TIMER_8_BIT;
+        constexpr static auto LED_LEDC_TIMER_FREQ_HZ = 20'000U;
+        constexpr static auto LED_LEDC_RES_MAX_VAL   = 1 << std::to_underlying(LED_LEDC_TIMER_RES);
+
+        constexpr static auto* TAG{"ILI9341"};
 
         // Helpers
         esp_err_t init_sequence();

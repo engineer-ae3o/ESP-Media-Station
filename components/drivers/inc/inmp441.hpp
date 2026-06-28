@@ -27,8 +27,7 @@ namespace audio::mic {
 
     class inmp441_t {
     public:
-        // Tag for identification in ESP_LOGx macros
-        constexpr static auto* TAG{"INMP441"};
+        constexpr static auto* TAG = "INMP441";
 
         // Sampling rate of the I2S channel
         constexpr static size_t SAMPLE_RATE_HZ = 48'000;

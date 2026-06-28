@@ -34,7 +34,7 @@ namespace touch {
     };
 
     struct coord_t {
-        uint16_t x{}, y{};
+        size_t x{}, y{};
     };
 
     template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE | ESP_INTR_FLAG_LEVEL4)>
@@ -42,10 +42,6 @@ namespace touch {
     public:
         constexpr static auto MAX_WIDTH  = 240U;
         constexpr static auto MAX_HEIGHT = 320U;
-
-        constexpr static auto TIMEOUT_MS = 50U;
-
-        constexpr static auto* TAG = "XPT2046";
 
         xpt2046_t() = default;
 
@@ -165,6 +161,19 @@ namespace touch {
 
         TimerHandle_t m_conv_timer{};
         QueueHandle_t m_event_queue{};
+
+        // Bit positions in the byte to be sent to the XPT2046 controller
+        constexpr static auto START_BIT   = 1U << 7;
+        constexpr static auto A2_BIT      = 1U << 6;
+        constexpr static auto A1_BIT      = 1U << 5;
+        constexpr static auto A0_BIT      = 1U << 4;
+        constexpr static auto MODE_BIT    = 1U << 3;
+        constexpr static auto SER_DFR_BIT = 1U << 2;
+        constexpr static auto PD1_BIT     = 1U << 1;
+        constexpr static auto PD0_BIT     = 1U << 0;
+
+        constexpr static auto* TAG        = "XPT2046";
+        constexpr static auto  TIMEOUT_MS = 50U;
 
         // Helpers
         void cleanup_resources() {

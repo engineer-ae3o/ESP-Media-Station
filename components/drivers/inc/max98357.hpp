@@ -40,27 +40,6 @@ namespace audio::amp {
     template<gain_t gain, mode_t mode, bool use_gain_pin = true>
     class max98357a_t {
     public:
-        // Tag for identification in ESP_LOGx macros
-        constexpr static auto* TAG{"MAX98357A"};
-
-        // Sampling rate of the I2S channel
-        constexpr static size_t SAMPLE_RATE_HZ = 48'000;
-
-        // Hardware limit on the DMA buffer size
-        constexpr static size_t MAX_DMA_BUF_SIZE = 4092;
-
-        // Number of DMA descriptors being used
-        constexpr static size_t DMA_DESCR_NUM = 4;
-
-        // Slot per frame is 2 if in stereo mode, 1 if using any of the channels individually
-        constexpr static size_t SLOTS_PER_FRAME = mode == mode_t::STEREO ? 2 : 1;
-
-        // Frame size is (32 bits * slots per frame / 8) bytes
-        constexpr static size_t FRAME_SIZE = SLOTS_PER_FRAME * std::to_underlying(I2S_SLOT_BIT_WIDTH_32BIT) / 8;
-
-        // Number of frames inside the DMA buffer
-        constexpr static size_t DMA_FRAME_NUM = MAX_DMA_BUF_SIZE / FRAME_SIZE;
-
         max98357a_t() = default;
 
         ~max98357a_t() noexcept {
@@ -286,6 +265,26 @@ namespace audio::amp {
 
         config_t          m_config{};
         i2s_chan_handle_t m_handle{};
+
+        constexpr static auto* TAG = "MAX98357A";
+
+        // Sampling rate of the I2S channel
+        constexpr static size_t SAMPLE_RATE_HZ = 48'000;
+
+        // Hardware limit on the DMA buffer size
+        constexpr static size_t MAX_DMA_BUF_SIZE = 4092;
+
+        // Number of DMA descriptors being used
+        constexpr static size_t DMA_DESCR_NUM = 4;
+
+        // Slot per frame is 2 if in stereo mode, 1 if using any of the channels individually
+        constexpr static size_t SLOTS_PER_FRAME = mode == mode_t::STEREO ? 2 : 1;
+
+        // Frame size is (32 bits * slots per frame / 8) bytes
+        constexpr static size_t FRAME_SIZE = SLOTS_PER_FRAME * std::to_underlying(I2S_SLOT_BIT_WIDTH_32BIT) / 8;
+
+        // Number of frames inside the DMA buffer
+        constexpr static size_t DMA_FRAME_NUM = MAX_DMA_BUF_SIZE / FRAME_SIZE;
 
         // Helpers
         [[nodiscard]] esp_err_t cleanup_resources() {

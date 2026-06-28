@@ -98,7 +98,7 @@ dependencies:
     - esp32h4
     version: 1.0.2
   espressif/esp_peer:
-    component_hash: 2013edcc7d88756830055a74d86a3900f484d6015aacb820a6b7d81e53c7b05b
+    component_hash: d6389ca3d0a218405a6d8a8a1afd67a4a47bd2657221f23e83bd537d770e7e3c
     dependencies:
     - name: espressif/esp_libsrtp
       registry_url: https://components.espressif.com
@@ -107,7 +107,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.4.1
+    version: 1.4.2
   idf:
     source:
       type: idf
@@ -137,6 +137,6 @@ direct_dependencies:
 - espressif/esp_peer
 - joltwallet/littlefs
 - lvgl/lvgl
-manifest_hash: 12af3db3a4df17029e8e08ae040718d79aaf01d2292a7dd5d1b84dbf1506071e
+manifest_hash: 26d210cc50877f4d498f48d25710cd4e58753d436da8c7dd29b9777c4c84761b
 target: esp32s3
 version: 3.0.0

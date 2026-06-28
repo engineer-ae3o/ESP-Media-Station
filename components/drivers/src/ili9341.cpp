@@ -32,8 +32,8 @@ namespace disp {
             .channel     = m_config.led_ledc_channel,
             .intr_type   = LEDC_INTR_DISABLE, // Deprecated, but here to satisfy the compiler
             .timer_sel   = m_config.led_ledc_timer,
-            .duty        = LEDC_RES_MAX_VAL,
-            .hpoint      = LEDC_RES_MAX_VAL - 1,
+            .duty        = LED_LEDC_RES_MAX_VAL,
+            .hpoint      = LED_LEDC_RES_MAX_VAL - 1,
             .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
             .flags       = {.output_invert = 0},
             .deconfigure = false,
@@ -248,8 +248,8 @@ namespace disp {
             .channel     = m_config.led_ledc_channel,
             .intr_type   = LEDC_INTR_DISABLE, // Deprecated, but here to satisfy the compiler
             .timer_sel   = m_config.led_ledc_timer,
-            .duty        = LEDC_RES_MAX_VAL,
-            .hpoint      = LEDC_RES_MAX_VAL - 1,
+            .duty        = LED_LEDC_RES_MAX_VAL,
+            .hpoint      = LED_LEDC_RES_MAX_VAL - 1,
             .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
             .flags       = {.output_invert = 0},
             .deconfigure = true,

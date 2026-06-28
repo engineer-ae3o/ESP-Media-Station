@@ -1,5 +1,4 @@
 #include "freertos/FreeRTOS.h"
-#include "freertos/projdefs.h"
 #include "freertos/task.h"
 
 #include "unity.h"
