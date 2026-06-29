@@ -3,42 +3,42 @@
 #include "freertos/task.h"
 
 #include "driver/spi_master.h"
-#include "driver/i2c_master.h"
 
 #include "esp_littlefs.h"
 #include "esp_log.h"
 #include "esp_err.h"
 
-#include "max98357.hpp"
+#include "config.hpp"
 #include "inmp441.hpp"
 #include "ili9341.hpp"
-#include "config.hpp"
-
-#include <span>
+#include "xpt2046.hpp"
+#include "max98357.hpp"
 
 namespace {
 
     [[noreturn]] void disp_task(void* arg) {
         (void)arg;
 
-        [[maybe_unused]] constexpr auto* TAG = "DISP_CAM";
+        [[maybe_unused]] constexpr auto* TAG = "ILI_XPT";
 
-        constexpr utils::spi_bus_config_t bus_config = {
-            .bus            = config::LCD_SPI_BUS,
-            .max_trans_size = disp::ili9341_t::MAX_WIDTH * disp::ili9341_t::MAX_HEIGHT * 2,
-            .mosi_pin       = config::LCD_MOSI_PIN,
+        // Initialize the SPI bus on which the ILI9341 resides
+        constexpr utils::spi_bus_config_t ili_bus_config = {
+            .bus            = config::ILI_SPI_BUS,
+            .max_trans_size = config::ILI_MAX_TRANS_SIZE,
+            .mosi_pin       = config::ILI_MOSI_PIN,
             .miso_pin       = GPIO_NUM_NC,
-            .sclk_pin       = config::LCD_CLK_PIN,
+            .sclk_pin       = config::ILI_CLK_PIN,
         };
-        ESP_ERROR_CHECK(utils::init_spi_bus(bus_config));
+        ESP_ERROR_CHECK(utils::init_spi_bus(ili_bus_config));
 
-        constexpr disp::config_t config = {
-            .spi_host           = config::LCD_SPI_BUS,
-            .spi_clock_speed_hz = config::LCD_SPI_CLK_SPEED_HZ,
-            .led_pin            = config::LCD_LED_PIN,
-            .rst_pin            = config::LCD_RST_PIN,
-            .cs_pin             = config::LCD_CS_PIN,
-            .dc_pin             = config::LCD_DC_PIN,
+        // Initialize the ILI9341
+        constexpr disp::config_t ili_config = {
+            .spi_host           = config::ILI_SPI_BUS,
+            .spi_clock_speed_hz = config::ILI_SPI_CLK_SPEED_HZ,
+            .led_pin            = config::ILI_LED_PIN,
+            .rst_pin            = config::ILI_RST_PIN,
+            .cs_pin             = config::ILI_CS_PIN,
+            .dc_pin             = config::ILI_DC_PIN,
             .rotation           = 0,
             .led_ledc_timer     = LEDC_TIMER_0,
             .led_ledc_channel   = LEDC_CHANNEL_0,
@@ -46,8 +46,31 @@ namespace {
 
         disp::ili9341_t display;
         ESP_ERROR_CHECK(disp::ili9341_t::init_ledc_timer(LEDC_TIMER_0));
-        ESP_ERROR_CHECK(display.init(config));
-        ESP_ERROR_CHECK(display.set_brightness(255));
+        ESP_ERROR_CHECK(display.init(ili_config));
+        ESP_ERROR_CHECK(display.set_brightness());
+
+        // Initialize the SPI bus on which the XPT2046 resides
+        constexpr utils::spi_bus_config_t xpt_bus_config = {
+            .bus            = config::XPT_SPI_BUS,
+            .max_trans_size = config::XPT_MAX_TRANS_SIZE,
+            .mosi_pin       = config::XPT_MOSI_PIN,
+            .miso_pin       = config::XPT_MISO_PIN,
+            .sclk_pin       = config::XPT_CLK_PIN,
+        };
+        ESP_ERROR_CHECK(utils::init_spi_bus(xpt_bus_config));
+
+        // Initialize the XPT2046
+        constexpr touch::config_t xpt_config = {
+            .spi_host      = config::XPT_SPI_BUS,
+            .clock_freq_hz = config::XPT_SPI_CLK_SPEED_HZ,
+            .queue_length  = 5,
+            .cs_pin        = config::XPT_CS_PIN,
+            .irq_pin       = config::XPT_IRQ_PIN,
+        };
+
+        touch::xpt2046_t xpt2046;
+        ESP_ERROR_CHECK(xpt2046.init(xpt_config));
+        auto event_queue = xpt2046.get_event_queue();
 
         while (true) {
             vTaskDelay(pdMS_TO_TICKS(100));

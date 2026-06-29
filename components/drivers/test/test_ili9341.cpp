@@ -17,12 +17,12 @@ namespace {
 
     consteval auto get_test_config() {
         return disp::config_t{
-            .spi_host           = config::LCD_SPI_BUS,
-            .spi_clock_speed_hz = config::LCD_SPI_CLK_SPEED_HZ,
-            .led_pin            = config::LCD_LED_PIN,
-            .rst_pin            = config::LCD_RST_PIN,
-            .cs_pin             = config::LCD_CS_PIN,
-            .dc_pin             = config::LCD_DC_PIN,
+            .spi_host           = config::ILI_SPI_BUS,
+            .spi_clock_speed_hz = config::ILI_SPI_CLK_SPEED_HZ,
+            .led_pin            = config::ILI_LED_PIN,
+            .rst_pin            = config::ILI_RST_PIN,
+            .cs_pin             = config::ILI_CS_PIN,
+            .dc_pin             = config::ILI_DC_PIN,
             .rotation           = 0,
             .led_ledc_timer     = LEDC_TIMER_0,
             .led_ledc_channel   = LEDC_CHANNEL_0,
@@ -32,17 +32,17 @@ namespace {
     struct spi_test_fixture_t {
         spi_test_fixture_t() {
             constexpr utils::spi_bus_config_t bus_config = {
-                .bus            = config::LCD_SPI_BUS,
-                .max_trans_size = disp::ili9341_t::MAX_WIDTH * disp::ili9341_t::MAX_HEIGHT * 2,
-                .mosi_pin       = config::LCD_MOSI_PIN,
+                .bus            = config::ILI_SPI_BUS,
+                .max_trans_size = config::ILI_MAX_TRANS_SIZE,
+                .mosi_pin       = config::ILI_MOSI_PIN,
                 .miso_pin       = GPIO_NUM_NC,
-                .sclk_pin       = config::LCD_CLK_PIN,
+                .sclk_pin       = config::ILI_CLK_PIN,
             };
             TEST_ESP_OK(utils::init_spi_bus(bus_config));
         }
 
         ~spi_test_fixture_t() {
-            TEST_ESP_OK(spi_bus_free(config::LCD_SPI_BUS));
+            TEST_ESP_OK(spi_bus_free(config::ILI_SPI_BUS));
         }
 
         spi_test_fixture_t(const spi_test_fixture_t&)            = delete;

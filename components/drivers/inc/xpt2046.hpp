@@ -1,7 +1,6 @@
 #pragma once
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/timers.h"
 
@@ -11,12 +10,12 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
-#include "portmacro.h"
 #include "utils.hpp"
 
-#include <span>
+#include <array>
 #include <cstdint>
 #include <utility>
+#include <optional>
 #include <expected>
 
 namespace touch {
@@ -26,7 +25,7 @@ namespace touch {
         spi_host_device_t spi_host{};
 
         uint32_t clock_freq_hz{};
-        size_t   queue_length{};
+        int      queue_length{};
 
         // GPIO pins
         gpio_num_t cs_pin{GPIO_NUM_NC};
@@ -40,17 +39,14 @@ namespace touch {
     template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE | ESP_INTR_FLAG_LEVEL4)>
     class xpt2046_t {
     public:
-        constexpr static auto MAX_WIDTH  = 240U;
-        constexpr static auto MAX_HEIGHT = 320U;
+        constexpr static auto MAX_X_COORD = 240U;
+        constexpr static auto MAX_Y_COORD = 320U;
 
         xpt2046_t() = default;
 
         ~xpt2046_t() noexcept {
             if (m_is_initialized) {
-                auto ret = cleanup_resources();
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to properly cleanup used resources before going out of scope: %s", esp_err_to_name(ret));
-                }
+                cleanup_resources();
             }
         }
 
@@ -73,24 +69,6 @@ namespace touch {
 
             m_config = config;
 
-            // Configure the IRQ pin
-            const gpio_config_t irq_config = {
-                .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.irq_pin)),
-                .mode         = GPIO_MODE_INPUT,
-                .pull_up_en   = GPIO_PULLUP_ENABLE,
-                .pull_down_en = GPIO_PULLDOWN_DISABLE,
-                .intr_type    = GPIO_INTR_NEGEDGE,
-            };
-            TRY(gpio_config(&irq_config));
-
-            if constexpr (init_gpio_isr_service) {
-                // Install the global gpio ISR service
-                TRY_WITH_FUNC(gpio_install_isr_service(flags), cleanup_resources());
-            }
-
-            // Add the ISR for the IRQ pin
-            TRY_WITH_FUNC(gpio_isr_handler_add(m_config.irq_pin, irq_handler, this), cleanup_resources());
-
             // Configure the XPT2046 as an SPI device
             const spi_device_interface_config_t device_config = {
                 .command_bits     = 0,
@@ -112,6 +90,42 @@ namespace touch {
             };
             TRY_WITH_FUNC(spi_bus_add_device(m_config.spi_host, &device_config, &m_device_handle), cleanup_resources());
 
+            // Send the control byte to the XPT2046
+            // Start bit is 1, A2, A1 and A0 bits are all 0 (used for channel select), mode bit is 0 for 12 bit ADC resolution,
+            // SER/DFR bit is 0 for differential mode, PD1 and PD0 bits are both 0 for auto power down between conversions
+            alignas(4) constexpr uint8_t control_byte = (1U << START_BIT_POS);
+
+            spi_transaction_t trans = {
+                .flags            = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL,
+                .cmd              = 0,
+                .addr             = 0,
+                .length           = sizeof(control_byte) * 8, // Length in bits
+                .rxlength         = 0,
+                .override_freq_hz = 0,
+                .user             = nullptr,
+                .tx_buffer        = &control_byte,
+                .rx_buffer        = nullptr,
+            };
+            TRY_WITH_FUNC(spi_device_transmit(m_device_handle, &trans), cleanup_resources());
+
+            // Configure the IRQ pin
+            const gpio_config_t irq_config = {
+                .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.irq_pin)),
+                .mode         = GPIO_MODE_INPUT,
+                .pull_up_en   = GPIO_PULLUP_ENABLE,
+                .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                .intr_type    = GPIO_INTR_NEGEDGE,
+            };
+            TRY_WITH_FUNC(gpio_config(&irq_config), cleanup_resources());
+
+            if constexpr (init_gpio_isr_service) {
+                TRY_WITH_FUNC(gpio_install_isr_service(flags), cleanup_resources());
+            }
+
+            // Add the ISR for the IRQ pin
+            TRY_WITH_FUNC(gpio_isr_handler_add(m_config.irq_pin, irq_handler, this), cleanup_resources());
+
+            // Create the timer for conversion and event queue used to pass the coordinates of presses
             m_conv_timer  = xTimerCreate("Conversion Timer", pdMS_TO_TICKS(TIMEOUT_MS), pdFALSE, this, conv_timer);
             m_event_queue = xQueueCreate(m_config.queue_length, sizeof(coord_t));
 
@@ -163,17 +177,26 @@ namespace touch {
         QueueHandle_t m_event_queue{};
 
         // Bit positions in the byte to be sent to the XPT2046 controller
-        constexpr static auto START_BIT   = 1U << 7;
-        constexpr static auto A2_BIT      = 1U << 6;
-        constexpr static auto A1_BIT      = 1U << 5;
-        constexpr static auto A0_BIT      = 1U << 4;
-        constexpr static auto MODE_BIT    = 1U << 3;
-        constexpr static auto SER_DFR_BIT = 1U << 2;
-        constexpr static auto PD1_BIT     = 1U << 1;
-        constexpr static auto PD0_BIT     = 1U << 0;
+        constexpr static uint8_t START_BIT_POS   = 7;
+        constexpr static uint8_t A2_BIT_POS      = 6;
+        constexpr static uint8_t A1_BIT_POS      = 5;
+        constexpr static uint8_t A0_BIT_POS      = 4;
+        constexpr static uint8_t MODE_BIT_POS    = 3;
+        constexpr static uint8_t SER_DFR_BIT_POS = 2;
+        constexpr static uint8_t PD1_BIT_POS     = 1;
+        constexpr static uint8_t PD0_BIT_POS     = 0;
+
+        // Channel select
+        constexpr static uint8_t X_CHAN_BIT_MASK = 0b101U << A0_BIT_POS;
+        constexpr static uint8_t Y_CHAN_BIT_MASK = 0b001U << A0_BIT_POS;
 
         constexpr static auto* TAG        = "XPT2046";
         constexpr static auto  TIMEOUT_MS = 50U;
+
+        enum class channel_t : uint8_t {
+            X_CHAN = X_CHAN_BIT_MASK,
+            Y_CHAN = Y_CHAN_BIT_MASK,
+        };
 
         // Helpers
         void cleanup_resources() {
@@ -206,6 +229,36 @@ namespace touch {
             m_is_initialized = false;
         }
 
+        [[nodiscard]] std::optional<uint16_t> read_chan(channel_t channel) {
+
+            // Construct the control byte
+            const uint8_t control_byte = 0x00U;
+
+            // FOr conversion, the XPT2046 expects ops of 24 bit cycles
+            // Only the control byte matters for the tx buffer
+            alignas(4) const uint8_t tx_buf[3] = {control_byte, 0x00U, 0x00U};
+            alignas(4) uint8_t       rx_buf[3]{};
+
+            spi_transaction_t trans = {
+                .flags            = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL,
+                .cmd              = 0,
+                .addr             = 0,
+                .length           = sizeof(tx_buf) * 8,
+                .rxlength         = sizeof(rx_buf) * 8,
+                .override_freq_hz = 0,
+                .user             = nullptr,
+                .tx_buffer        = tx_buf,
+                .rx_buffer        = rx_buf,
+            };
+
+            auto ret = spi_device_transmit(m_device_handle, &trans);
+            if ((ret != ESP_OK) || (rx_buf[0] == 0 && rx_buf[1] == 0 && rx_buf[2] == 0)) {
+                return std::nullopt;
+            }
+
+            return static_cast<uint16_t>(0);
+        }
+
         static void IRAM_ATTR irq_handler(void* arg) {
             auto* driver = static_cast<xpt2046_t*>(arg);
 
@@ -213,7 +266,7 @@ namespace touch {
             gpio_intr_disable(driver->m_config.irq_pin);
 
             // Enable the conversion timer
-            BaseType_t higher_priority_task_woken{pdFALSE};
+            auto higher_priority_task_woken{pdFALSE};
             xTimerStartFromISR(driver->m_conv_timer, &higher_priority_task_woken);
 
             if (higher_priority_task_woken == pdTRUE) {
@@ -221,10 +274,14 @@ namespace touch {
             }
         }
 
-        static void IRAM_ATTR conv_timer(TimerHandle_t handle) {
+        static void conv_timer(TimerHandle_t handle) {
             auto* driver = static_cast<xpt2046_t*>(pvTimerGetTimerID(handle));
 
-            // TODO: Handle ADC conversion and mapping to coordinates logic
+            // Read ADC samples for X and Y channels
+            [[maybe_unused]] auto x = driver->read_chan(channel_t::X_CHAN);
+            [[maybe_unused]] auto y = driver->read_chan(channel_t::Y_CHAN);
+
+            // TODO: Handle conversion from raw ADC samples to useable coordinates
             coord_t coord{};
 
             // Enable the interrupt only after we are done with conversion
