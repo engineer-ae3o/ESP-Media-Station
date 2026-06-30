@@ -203,10 +203,10 @@ namespace touch {
         };
 
         struct calibration_data_t {
-            constexpr static uint16_t x_min{380};
-            constexpr static uint16_t y_min{380};
-            constexpr static uint16_t x_max{3800};
-            constexpr static uint16_t y_max{3800};
+            constexpr static uint16_t x_min{375};
+            constexpr static uint16_t y_min{375};
+            constexpr static uint16_t x_max{3750};
+            constexpr static uint16_t y_max{3750};
         };
 
         // Helpers
@@ -286,7 +286,7 @@ namespace touch {
             if (higher_priority_task_woken == pdTRUE) {
                 portYIELD_FROM_ISR();
             } else {
-                // Reenable the interrupt since the timer failed to be started and won't do it
+                // Re-enable the interrupt since the timer failed to be started and won't enable it
                 gpio_intr_enable(driver->m_config.irq_pin);
             }
         }
@@ -326,11 +326,11 @@ namespace touch {
             const uint16_t clamped_x = std::clamp(average_x, calibration_data_t::x_min, calibration_data_t::x_max);
             const uint16_t clamped_y = std::clamp(average_y, calibration_data_t::y_min, calibration_data_t::y_max);
 
-            // Linearly interpolate the clean and clamped sample into the
-            uint16_t screen_x = static_cast<uint32_t>(clamped_x - calibration_data_t::x_min) * (driver->m_config.screen_pixel_len_x - 1) /
-                                (calibration_data_t::x_max - calibration_data_t::x_min);
-            uint16_t screen_y = static_cast<uint32_t>(clamped_y - calibration_data_t::y_min) * (driver->m_config.screen_pixel_len_y - 1) /
-                                (calibration_data_t::y_max - calibration_data_t::y_min);
+            // Use linear interpolation to find the sample as a pixel coordinate
+            const uint16_t screen_x = static_cast<uint32_t>(clamped_x - calibration_data_t::x_min) *
+                                      (driver->m_config.screen_pixel_len_x - 1) / (calibration_data_t::x_max - calibration_data_t::x_min);
+            const uint16_t screen_y = static_cast<uint32_t>(clamped_y - calibration_data_t::y_min) *
+                                      (driver->m_config.screen_pixel_len_y - 1) / (calibration_data_t::y_max - calibration_data_t::y_min);
 
             const coord_t coord = {
                 .x = screen_x,
