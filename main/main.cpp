@@ -1,5 +1,4 @@
 #include "freertos/FreeRTOS.h"
-#include "freertos/projdefs.h"
 #include "freertos/task.h"
 
 #include "driver/spi_master.h"
@@ -44,10 +43,10 @@ namespace {
             .led_ledc_channel   = LEDC_CHANNEL_0,
         };
 
-        disp::ili9341_t display;
+        disp::ili9341_t ili9341;
         ESP_ERROR_CHECK(disp::ili9341_t::init_ledc_timer(LEDC_TIMER_0));
-        ESP_ERROR_CHECK(display.init(ili_config));
-        ESP_ERROR_CHECK(display.set_brightness());
+        ESP_ERROR_CHECK(ili9341.init(ili_config));
+        ESP_ERROR_CHECK(ili9341.set_brightness());
 
         // Initialize the SPI bus on which the XPT2046 resides
         constexpr utils::spi_bus_config_t xpt_bus_config = {
@@ -70,10 +69,11 @@ namespace {
 
         touch::xpt2046_t xpt2046;
         ESP_ERROR_CHECK(xpt2046.init(xpt_config));
-        auto event_queue = xpt2046.get_event_queue();
+        auto* event_queue = xpt2046.get_event_queue();
+        assert(event_queue != nullptr);
 
         while (true) {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(portMAX_DELAY);
         }
     }
 

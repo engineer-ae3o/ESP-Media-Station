@@ -13,10 +13,11 @@
 #include "utils.hpp"
 
 #include <array>
+#include <numeric>
 #include <cstdint>
 #include <utility>
 #include <optional>
-#include <expected>
+#include <algorithm>
 
 namespace touch {
 
@@ -30,18 +31,19 @@ namespace touch {
         // GPIO pins
         gpio_num_t cs_pin{GPIO_NUM_NC};
         gpio_num_t irq_pin{GPIO_NUM_NC};
+
+        // Pixel length of the display
+        uint16_t screen_pixel_len_x{};
+        uint16_t screen_pixel_len_y{};
     };
 
     struct coord_t {
-        size_t x{}, y{};
+        uint16_t x{}, y{};
     };
 
     template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE | ESP_INTR_FLAG_LEVEL4)>
     class xpt2046_t {
     public:
-        constexpr static auto MAX_X_COORD = 240U;
-        constexpr static auto MAX_Y_COORD = 320U;
-
         xpt2046_t() = default;
 
         ~xpt2046_t() noexcept {
@@ -88,7 +90,7 @@ namespace touch {
                 .pre_cb           = nullptr,
                 .post_cb          = nullptr,
             };
-            TRY_WITH_FUNC(spi_bus_add_device(m_config.spi_host, &device_config, &m_device_handle), cleanup_resources());
+            TRY(spi_bus_add_device(m_config.spi_host, &device_config, &m_device_handle));
 
             // Send the control byte to the XPT2046
             // Start bit is 1, A2, A1 and A0 bits are all 0 (used for channel select), mode bit is 0 for 12 bit ADC resolution,
@@ -114,7 +116,7 @@ namespace touch {
                 .mode         = GPIO_MODE_INPUT,
                 .pull_up_en   = GPIO_PULLUP_ENABLE,
                 .pull_down_en = GPIO_PULLDOWN_DISABLE,
-                .intr_type    = GPIO_INTR_NEGEDGE,
+                .intr_type    = GPIO_INTR_LOW_LEVEL,
             };
             TRY_WITH_FUNC(gpio_config(&irq_config), cleanup_resources());
 
@@ -160,9 +162,9 @@ namespace touch {
          *
          * @return The event queue. Pretty straightforward.
          */
-        [[nodiscard]] std::expected<QueueHandle_t, esp_err_t> get_event_queue() const {
+        [[nodiscard]] QueueHandle_t get_event_queue() const {
             if (!m_is_initialized) {
-                return std::unexpected(ESP_ERR_INVALID_STATE);
+                return nullptr;
             }
             return m_event_queue;
         }
@@ -177,25 +179,34 @@ namespace touch {
         QueueHandle_t m_event_queue{};
 
         // Bit positions in the byte to be sent to the XPT2046 controller
-        constexpr static uint8_t START_BIT_POS   = 7;
-        constexpr static uint8_t A2_BIT_POS      = 6;
-        constexpr static uint8_t A1_BIT_POS      = 5;
-        constexpr static uint8_t A0_BIT_POS      = 4;
-        constexpr static uint8_t MODE_BIT_POS    = 3;
-        constexpr static uint8_t SER_DFR_BIT_POS = 2;
-        constexpr static uint8_t PD1_BIT_POS     = 1;
-        constexpr static uint8_t PD0_BIT_POS     = 0;
+        constexpr static uint8_t START_BIT_POS   = 7; // Enables the XPT2046
+        constexpr static uint8_t A2_BIT_POS      = 6; // Controls channel selection
+        constexpr static uint8_t A1_BIT_POS      = 5; // Controls channel selection
+        constexpr static uint8_t A0_BIT_POS      = 4; // Controls channel selection
+        constexpr static uint8_t MODE_BIT_POS    = 3; // Determines whether the ADC uses 12 bit or 8 bit resolution
+        constexpr static uint8_t SER_DFR_BIT_POS = 2; // Selects between Single ended or Differential reference mode
+        constexpr static uint8_t PD1_BIT_POS     = 1; // Power down and internal reference selection
+        constexpr static uint8_t PD0_BIT_POS     = 0; // Power down and internal reference selection
 
-        // Channel select
-        constexpr static uint8_t X_CHAN_BIT_MASK = 0b101U << A0_BIT_POS;
-        constexpr static uint8_t Y_CHAN_BIT_MASK = 0b001U << A0_BIT_POS;
+        constexpr static auto*   TAG        = "XPT2046";
+        constexpr static uint8_t TIMEOUT_MS = 50;
 
-        constexpr static auto* TAG        = "XPT2046";
-        constexpr static auto  TIMEOUT_MS = 50U;
+        constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 10;
+        constexpr static uint8_t TRIM_COUNT             = 2;
+
+        // Since we have to trim the number of samples from both the front and back of sorted array of samples
+        constexpr static uint8_t VALID_SAMPLE_COUNT = NUM_OF_TIMES_TO_SAMPLE - (TRIM_COUNT * 2);
 
         enum class channel_t : uint8_t {
-            X_CHAN = X_CHAN_BIT_MASK,
-            Y_CHAN = Y_CHAN_BIT_MASK,
+            X_CHAN = 0b101U,
+            Y_CHAN = 0b001U,
+        };
+
+        struct calibration_data_t {
+            constexpr static uint16_t x_min{380};
+            constexpr static uint16_t y_min{380};
+            constexpr static uint16_t x_max{3800};
+            constexpr static uint16_t y_max{3800};
         };
 
         // Helpers
@@ -232,7 +243,8 @@ namespace touch {
         [[nodiscard]] std::optional<uint16_t> read_chan(channel_t channel) {
 
             // Construct the control byte
-            const uint8_t control_byte = 0x00U;
+            const uint8_t control_byte = (1U << START_BIT_POS) | (std::to_underlying(channel) << A0_BIT_POS) | (0U << MODE_BIT_POS) |
+                                         (0U << SER_DFR_BIT_POS) | (0U << PD1_BIT_POS) | (0U << PD0_BIT_POS);
 
             // FOr conversion, the XPT2046 expects ops of 24 bit cycles
             // Only the control byte matters for the tx buffer
@@ -251,15 +263,17 @@ namespace touch {
                 .rx_buffer        = rx_buf,
             };
 
-            auto ret = spi_device_transmit(m_device_handle, &trans);
+            // We're sending 3 bytes, setup overhead for DMA not worth it here
+            auto ret = spi_device_polling_transmit(m_device_handle, &trans);
             if ((ret != ESP_OK) || (rx_buf[0] == 0 && rx_buf[1] == 0 && rx_buf[2] == 0)) {
                 return std::nullopt;
             }
 
-            return static_cast<uint16_t>(0);
+            // Get the lower 12 bits of the received data and put in lower bit positions
+            return static_cast<uint16_t>(((rx_buf[1] & 0x0FU) << 8) | rx_buf[2]);
         }
 
-        static void IRAM_ATTR irq_handler(void* arg) {
+        static void irq_handler(void* arg) {
             auto* driver = static_cast<xpt2046_t*>(arg);
 
             // Mask interrupts on the irq pin to prevent false positives during conversion
@@ -271,18 +285,57 @@ namespace touch {
 
             if (higher_priority_task_woken == pdTRUE) {
                 portYIELD_FROM_ISR();
+            } else {
+                // Reenable the interrupt since the timer failed to be started and won't do it
+                gpio_intr_enable(driver->m_config.irq_pin);
             }
         }
 
         static void conv_timer(TimerHandle_t handle) {
             auto* driver = static_cast<xpt2046_t*>(pvTimerGetTimerID(handle));
 
-            // Read ADC samples for X and Y channels
-            [[maybe_unused]] auto x = driver->read_chan(channel_t::X_CHAN);
-            [[maybe_unused]] auto y = driver->read_chan(channel_t::Y_CHAN);
+            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> x_samples{};
+            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> y_samples{};
 
-            // TODO: Handle conversion from raw ADC samples to useable coordinates
-            coord_t coord{};
+            for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE; i++) {
+                // Read ADC samples for X and Y channels
+                const auto x_sample = driver->read_chan(channel_t::X_CHAN);
+                const auto y_sample = driver->read_chan(channel_t::Y_CHAN);
+
+                if (!x_sample.has_value() || !y_sample.has_value()) {
+                    // Enable the interrupt since an error occurred while getting samples
+                    gpio_intr_enable(driver->m_config.irq_pin);
+                    return;
+                }
+
+                x_samples[i] = x_sample.value();
+                y_samples[i] = y_sample.value();
+            }
+
+            // Sort the samples so the positions of highest and lowest are known
+            std::ranges::sort(x_samples);
+            std::ranges::sort(y_samples);
+
+            // Average all the samples excluding the two largest and two smallest samples
+            const uint16_t average_x =
+                std::accumulate(x_samples.begin() + TRIM_COUNT, x_samples.end() - TRIM_COUNT, 0) / VALID_SAMPLE_COUNT;
+            const uint16_t average_y =
+                std::accumulate(y_samples.begin() + TRIM_COUNT, y_samples.end() - TRIM_COUNT, 0) / VALID_SAMPLE_COUNT;
+
+            // Clamp data to maximum and minimum readings
+            const uint16_t clamped_x = std::clamp(average_x, calibration_data_t::x_min, calibration_data_t::x_max);
+            const uint16_t clamped_y = std::clamp(average_y, calibration_data_t::y_min, calibration_data_t::y_max);
+
+            // Linearly interpolate the clean and clamped sample into the
+            uint16_t screen_x = static_cast<uint32_t>(clamped_x - calibration_data_t::x_min) * (driver->m_config.screen_pixel_len_x - 1) /
+                                (calibration_data_t::x_max - calibration_data_t::x_min);
+            uint16_t screen_y = static_cast<uint32_t>(clamped_y - calibration_data_t::y_min) * (driver->m_config.screen_pixel_len_y - 1) /
+                                (calibration_data_t::y_max - calibration_data_t::y_min);
+
+            const coord_t coord = {
+                .x = screen_x,
+                .y = screen_y,
+            };
 
             // Enable the interrupt only after we are done with conversion
             gpio_intr_enable(driver->m_config.irq_pin);

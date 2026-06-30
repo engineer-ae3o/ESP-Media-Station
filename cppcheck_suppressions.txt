@@ -5,6 +5,7 @@ unknownMacro
 preprocessorErrorDirective
 noValidConfiguration
 unmatchedSuppression
+badBitmaskCheck
 
 unusedStructMember
 constParameterPointer
