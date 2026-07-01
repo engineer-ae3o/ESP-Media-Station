@@ -5,7 +5,6 @@
 #include "driver/ledc.h"
 
 #include "esp_err.h"
-#include "hal/ledc_types.h"
 
 #include <span>
 #include <cstdint>
@@ -124,7 +123,7 @@ namespace disp {
         constexpr static auto LED_LEDC_TIMER_FREQ_HZ = 20'000U;
         constexpr static auto LED_LEDC_RES_MAX_VAL   = 1 << std::to_underlying(LED_LEDC_TIMER_RES);
 
-        constexpr static auto* TAG{"ILI9341"};
+        constexpr static auto* TAG = "ILI9341";
 
         // Helpers
         esp_err_t init_sequence();

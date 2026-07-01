@@ -189,7 +189,7 @@ namespace touch {
         constexpr static uint8_t PD0_BIT_POS     = 0; // Power down and internal reference selection
 
         constexpr static auto*   TAG        = "XPT2046";
-        constexpr static uint8_t TIMEOUT_MS = 50;
+        constexpr static uint8_t TIMEOUT_MS = 20;
 
         constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 10;
         constexpr static uint8_t TRIM_COUNT             = 2;
@@ -274,7 +274,7 @@ namespace touch {
         }
 
         static void irq_handler(void* arg) {
-            auto* driver = static_cast<xpt2046_t*>(arg);
+            auto* driver = static_cast<xpt2046_t<>*>(arg);
 
             // Mask interrupts on the irq pin to prevent false positives during conversion
             gpio_intr_disable(driver->m_config.irq_pin);
@@ -292,7 +292,7 @@ namespace touch {
         }
 
         static void conv_timer(TimerHandle_t handle) {
-            auto* driver = static_cast<xpt2046_t*>(pvTimerGetTimerID(handle));
+            auto* driver = static_cast<xpt2046_t<>*>(pvTimerGetTimerID(handle));
 
             std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> x_samples{};
             std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> y_samples{};

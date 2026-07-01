@@ -27,10 +27,13 @@ namespace utils {
 
     struct spi_bus_config_t {
         spi_host_device_t bus{};
-        int               max_trans_size{};
-        gpio_num_t        mosi_pin{GPIO_NUM_NC};
-        gpio_num_t        miso_pin{GPIO_NUM_NC};
-        gpio_num_t        sclk_pin{GPIO_NUM_NC};
+
+        uint32_t flags{SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS};
+        int      max_trans_size{};
+
+        gpio_num_t mosi_pin{GPIO_NUM_NC};
+        gpio_num_t miso_pin{GPIO_NUM_NC};
+        gpio_num_t sclk_pin{GPIO_NUM_NC};
     };
 
     [[nodiscard]] inline esp_err_t init_spi_bus(const spi_bus_config_t& config) {
@@ -47,7 +50,7 @@ namespace utils {
             .data7_io_num          = GPIO_NUM_NC,
             .data_io_default_level = false,
             .max_transfer_sz       = config.max_trans_size,
-            .flags                 = (SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS),
+            .flags                 = config.flags,
             .isr_cpu_id            = ESP_INTR_CPU_AFFINITY_AUTO,
             .intr_flags            = 0,
         };

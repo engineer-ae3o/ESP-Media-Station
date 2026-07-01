@@ -23,6 +23,7 @@ namespace {
         // Initialize the SPI bus on which the ILI9341 resides
         constexpr utils::spi_bus_config_t ili_bus_config = {
             .bus            = config::ILI_SPI_BUS,
+            .flags          = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS,
             .max_trans_size = config::ILI_MAX_TRANS_SIZE,
             .mosi_pin       = config::ILI_MOSI_PIN,
             .miso_pin       = GPIO_NUM_NC,
@@ -51,6 +52,7 @@ namespace {
         // Initialize the SPI bus on which the XPT2046 resides
         constexpr utils::spi_bus_config_t xpt_bus_config = {
             .bus            = config::XPT_SPI_BUS,
+            .flags          = SPICOMMON_BUSFLAG_MASTER,
             .max_trans_size = config::XPT_MAX_TRANS_SIZE,
             .mosi_pin       = config::XPT_MOSI_PIN,
             .miso_pin       = config::XPT_MISO_PIN,

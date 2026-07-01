@@ -123,8 +123,8 @@ TEST_CASE("Flush Valid Data from PSRAM", "[ili9341][spi][psram]") {
     TEST_ESP_OK(display.init(cfg));
     TEST_ESP_OK(display.set_brightness());
 
-    // Allocate a 100x100 block in PSRAM (20,000 bytes)
-    constexpr size_t pixel_count = 100 * 100;
+    // Allocate a full framebuffer buffer
+    constexpr size_t pixel_count = disp::ili9341_t::MAX_HEIGHT * disp::ili9341_t::MAX_WIDTH;
     auto*            buf =
         static_cast<uint16_t*>(heap_caps_malloc(pixel_count * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT | MALLOC_CAP_DMA));
     TEST_ASSERT_NOT_NULL(buf);
