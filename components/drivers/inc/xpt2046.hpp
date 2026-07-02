@@ -126,7 +126,7 @@ namespace touch {
             TRY_WITH_FUNC(gpio_isr_handler_add(m_config.irq_pin, irq_handler, this), cleanup_resources());
 
             // Create the timer for conversion and event queue used to pass the coordinates of presses
-            m_conv_timer  = xTimerCreate("Conversion Timer", pdMS_TO_TICKS(TIMEOUT_MS), pdFALSE, this, conv_timer);
+            m_conv_timer  = xTimerCreate("Conversion Timer", pdMS_TO_TICKS(DEBOUNCE_MS), pdFALSE, this, conv_timer);
             m_event_queue = xQueueCreate(m_config.queue_length, sizeof(coord_t));
 
             if (!m_event_queue || !m_conv_timer) {
@@ -186,9 +186,9 @@ namespace touch {
         constexpr static uint8_t PD1_BIT_POS     = 1; // Power down and internal reference selection
         constexpr static uint8_t PD0_BIT_POS     = 0; // Power down and internal reference selection
 
-        constexpr static auto*   TAG        = "XPT2046";
-        constexpr static uint8_t TIMEOUT_MS = 20;
+        constexpr static auto* TAG = "XPT2046";
 
+        constexpr static uint8_t DEBOUNCE_MS            = 20;
         constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 10;
         constexpr static uint8_t TRIM_COUNT             = 2;
 
@@ -254,7 +254,7 @@ namespace touch {
 
             // We're sending 3 bytes, setup overhead for DMA not worth it here
             auto ret = spi_device_polling_transmit(m_device_handle, &trans);
-            if ((ret != ESP_OK) || (rx_buf[0] == 0 && rx_buf[1] == 0 && rx_buf[2] == 0)) {
+            if (ret != ESP_OK) {
                 return std::nullopt;
             }
 
@@ -263,37 +263,37 @@ namespace touch {
         }
 
         static void irq_handler(void* arg) {
-            auto* driver = static_cast<xpt2046_t<>*>(arg);
+            auto& driver = *static_cast<xpt2046_t<>*>(arg);
 
             // Mask interrupts on the irq pin to prevent false positives during conversion
-            gpio_intr_disable(driver->m_config.irq_pin);
+            gpio_intr_disable(driver.m_config.irq_pin);
 
             // Enable the conversion timer
             auto higher_priority_task_woken{pdFALSE};
-            xTimerStartFromISR(driver->m_conv_timer, &higher_priority_task_woken);
+            xTimerStartFromISR(driver.m_conv_timer, &higher_priority_task_woken);
 
             if (higher_priority_task_woken == pdTRUE) {
                 portYIELD_FROM_ISR();
             } else {
                 // Re-enable the interrupt since the timer failed to be started and won't enable it
-                gpio_intr_enable(driver->m_config.irq_pin);
+                gpio_intr_enable(driver.m_config.irq_pin);
             }
         }
 
         static void conv_timer(TimerHandle_t handle) {
-            auto* driver = static_cast<xpt2046_t<>*>(pvTimerGetTimerID(handle));
+            auto& driver = *static_cast<xpt2046_t<>*>(pvTimerGetTimerID(handle));
 
             std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> x_samples{};
             std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> y_samples{};
 
             for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE; i++) {
                 // Read ADC samples for X and Y channels
-                const auto x_sample = driver->read_chan<channel_t::X_CHAN>();
-                const auto y_sample = driver->read_chan<channel_t::Y_CHAN>();
+                const auto x_sample = driver.read_chan<channel_t::X_CHAN>();
+                const auto y_sample = driver.read_chan<channel_t::Y_CHAN>();
 
                 if (!x_sample.has_value() || !y_sample.has_value()) {
                     // Enable the interrupt since an error occurred while getting samples
-                    gpio_intr_enable(driver->m_config.irq_pin);
+                    gpio_intr_enable(driver.m_config.irq_pin);
                     return;
                 }
 
@@ -302,13 +302,13 @@ namespace touch {
             }
 
             const auto coord = compute_coord<NUM_OF_TIMES_TO_SAMPLE, TRIM_COUNT>(
-                x_samples, y_samples, driver->m_config.screen_pixel_len_x, driver->m_config.screen_pixel_len_y);
+                x_samples, y_samples, driver.m_config.screen_pixel_len_x, driver.m_config.screen_pixel_len_y);
 
             // Enable the interrupt only after we are done with conversion
-            gpio_intr_enable(driver->m_config.irq_pin);
+            gpio_intr_enable(driver.m_config.irq_pin);
 
             // Push coordinate of press to the event queue
-            auto ret = xQueueSend(driver->m_event_queue, &coord, 0);
+            auto ret = xQueueSend(driver.m_event_queue, &coord, 0);
             if (ret == pdPASS) {
                 portYIELD();
             }
