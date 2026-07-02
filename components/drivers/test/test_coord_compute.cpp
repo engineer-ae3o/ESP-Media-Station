@@ -24,6 +24,7 @@ namespace {
 } // namespace
 
 TEST_CASE("All identical samples produce that exact value", "[coord_compute]") {
+
     constexpr samples_t x_samples = make_filled_array(2000);
     constexpr samples_t y_samples = make_filled_array(2000);
 

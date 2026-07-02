@@ -3,8 +3,8 @@
 
 #include "unity.h"
 
-#include "inmp441.hpp"
 #include "config.hpp"
+#include "inmp441.hpp"
 
 #include <atomic>
 #include <cstdint>

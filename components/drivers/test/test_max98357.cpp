@@ -3,12 +3,12 @@
 
 #include "unity.h"
 
-#include "max98357.hpp"
 #include "config.hpp"
+#include "max98357.hpp"
 
+#include <cmath>
 #include <array>
 #include <cstdint>
-#include <cmath>
 #include <numbers>
 
 namespace {

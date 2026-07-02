@@ -6,10 +6,10 @@
 
 #include "driver/spi_master.h"
 
+#include "utils.hpp"
+#include "config.hpp"
 #include "xpt2046.hpp"
 #include "ili9341.hpp"
-#include "config.hpp"
-#include "utils.hpp"
 
 #include <array>
 #include <cstdio>
