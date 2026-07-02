@@ -11,13 +11,12 @@
 #include "esp_log.h"
 
 #include "utils.hpp"
+#include "coord_compute.hpp"
 
 #include <array>
-#include <numeric>
 #include <cstdint>
 #include <utility>
 #include <optional>
-#include <algorithm>
 
 namespace touch {
 
@@ -25,6 +24,7 @@ namespace touch {
         // SPI configuration
         spi_host_device_t spi_host{};
 
+        // Blame the awkward types on ESP-IDF's SPI driver
         uint32_t clock_freq_hz{};
         int      queue_length{};
 
@@ -37,13 +37,11 @@ namespace touch {
         uint16_t screen_pixel_len_y{};
     };
 
-    struct coord_t {
-        uint16_t x{}, y{};
-    };
-
     template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE | ESP_INTR_FLAG_LEVEL4)>
     class xpt2046_t {
     public:
+        constexpr static uint8_t MAX_DATA_WRITE_BYTES = 3;
+
         xpt2046_t() = default;
 
         ~xpt2046_t() noexcept {
@@ -194,19 +192,9 @@ namespace touch {
         constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 10;
         constexpr static uint8_t TRIM_COUNT             = 2;
 
-        // Since we have to trim the number of samples from both the front and back of sorted array of samples
-        constexpr static uint8_t VALID_SAMPLE_COUNT = NUM_OF_TIMES_TO_SAMPLE - (TRIM_COUNT * 2);
-
         enum class channel_t : uint8_t {
             X_CHAN = 0b101U,
             Y_CHAN = 0b001U,
-        };
-
-        struct calibration_data_t {
-            constexpr static uint16_t x_min{375};
-            constexpr static uint16_t y_min{375};
-            constexpr static uint16_t x_max{3750};
-            constexpr static uint16_t y_max{3750};
         };
 
         // Helpers
@@ -240,27 +228,28 @@ namespace touch {
             m_is_initialized = false;
         }
 
-        [[nodiscard]] std::optional<uint16_t> read_chan(channel_t channel) {
+        template<channel_t channel>
+        [[nodiscard]] std::optional<uint16_t> read_chan() {
 
             // Construct the control byte
-            const uint8_t control_byte = (1U << START_BIT_POS) | (std::to_underlying(channel) << A0_BIT_POS) | (0U << MODE_BIT_POS) |
-                                         (0U << SER_DFR_BIT_POS) | (0U << PD1_BIT_POS) | (0U << PD0_BIT_POS);
+            constexpr uint8_t control_byte = (1U << START_BIT_POS) | (std::to_underlying(channel) << A0_BIT_POS) | (0U << MODE_BIT_POS) |
+                                             (0U << SER_DFR_BIT_POS) | (0U << PD1_BIT_POS) | (0U << PD0_BIT_POS);
 
-            // FOr conversion, the XPT2046 expects ops of 24 bit cycles
+            // For conversion, the XPT2046 expects ops of 24 bit cycles
             // Only the control byte matters for the tx buffer
-            alignas(4) const uint8_t tx_buf[3] = {control_byte, 0x00U, 0x00U};
-            alignas(4) uint8_t       rx_buf[3]{};
+            alignas(4) constexpr std::array<uint8_t, MAX_DATA_WRITE_BYTES> tx_buf = {control_byte, 0x00U, 0x00U};
+            alignas(4) std::array<uint8_t, MAX_DATA_WRITE_BYTES>           rx_buf{};
 
             spi_transaction_t trans = {
                 .flags            = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL,
                 .cmd              = 0,
                 .addr             = 0,
-                .length           = sizeof(tx_buf) * 8,
-                .rxlength         = sizeof(rx_buf) * 8,
+                .length           = MAX_DATA_WRITE_BYTES * 8,
+                .rxlength         = MAX_DATA_WRITE_BYTES * 8,
                 .override_freq_hz = 0,
                 .user             = nullptr,
-                .tx_buffer        = tx_buf,
-                .rx_buffer        = rx_buf,
+                .tx_buffer        = tx_buf.data(),
+                .rx_buffer        = rx_buf.data(),
             };
 
             // We're sending 3 bytes, setup overhead for DMA not worth it here
@@ -299,8 +288,8 @@ namespace touch {
 
             for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE; i++) {
                 // Read ADC samples for X and Y channels
-                const auto x_sample = driver->read_chan(channel_t::X_CHAN);
-                const auto y_sample = driver->read_chan(channel_t::Y_CHAN);
+                const auto x_sample = driver->read_chan<channel_t::X_CHAN>();
+                const auto y_sample = driver->read_chan<channel_t::Y_CHAN>();
 
                 if (!x_sample.has_value() || !y_sample.has_value()) {
                     // Enable the interrupt since an error occurred while getting samples
@@ -312,30 +301,8 @@ namespace touch {
                 y_samples[i] = y_sample.value();
             }
 
-            // Sort the samples so the positions of highest and lowest are known
-            std::ranges::sort(x_samples);
-            std::ranges::sort(y_samples);
-
-            // Average all the samples excluding the two largest and two smallest samples
-            const uint16_t average_x =
-                std::accumulate(x_samples.begin() + TRIM_COUNT, x_samples.end() - TRIM_COUNT, 0) / VALID_SAMPLE_COUNT;
-            const uint16_t average_y =
-                std::accumulate(y_samples.begin() + TRIM_COUNT, y_samples.end() - TRIM_COUNT, 0) / VALID_SAMPLE_COUNT;
-
-            // Clamp data to maximum and minimum readings
-            const uint16_t clamped_x = std::clamp(average_x, calibration_data_t::x_min, calibration_data_t::x_max);
-            const uint16_t clamped_y = std::clamp(average_y, calibration_data_t::y_min, calibration_data_t::y_max);
-
-            // Use linear interpolation to find the sample as a pixel coordinate
-            const uint16_t screen_x = static_cast<uint32_t>(clamped_x - calibration_data_t::x_min) *
-                                      (driver->m_config.screen_pixel_len_x - 1) / (calibration_data_t::x_max - calibration_data_t::x_min);
-            const uint16_t screen_y = static_cast<uint32_t>(clamped_y - calibration_data_t::y_min) *
-                                      (driver->m_config.screen_pixel_len_y - 1) / (calibration_data_t::y_max - calibration_data_t::y_min);
-
-            const coord_t coord = {
-                .x = screen_x,
-                .y = screen_y,
-            };
+            const auto coord = compute_coord<NUM_OF_TIMES_TO_SAMPLE, TRIM_COUNT>(
+                x_samples, y_samples, driver->m_config.screen_pixel_len_x, driver->m_config.screen_pixel_len_y);
 
             // Enable the interrupt only after we are done with conversion
             gpio_intr_enable(driver->m_config.irq_pin);
