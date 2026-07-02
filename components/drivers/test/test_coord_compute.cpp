@@ -59,23 +59,20 @@ TEST_CASE("Outliers beyond the trim window are excluded from the average", "[tou
     static_assert(clean_coord.y == coord.y);
 }
 
-TEST_CASE("Rounding: average that lands on .5 rounds up, not truncates", "[touch_math]") {
-    // 6 samples survive trimming. Sum = 12001 -> 12001/6 = 2000.1666, average
-    // via (sum + n/2)/n should round to 2000, not floor to 1999 or 2000.5.
-    // Pick values that sum to something whose /6 has a clean .5 boundary instead:
-    // sum = 12003 -> 2000.5 exactly. Rounding-to-nearest should give 2001 (or 2000,
-    // implementation picks round-half-up here); truncation would give 2000.
-    constexpr samples_t x_samples = {0, 0, 2000, 2000, 2001, 2001, 2001, 2001, 4095, 4095};
-    constexpr samples_t y_samples = {0, 0, 2000, 2000, 2001, 2001, 2001, 2001, 4095, 4095};
-    // Trimmed middle 6: {2000, 2000, 2001, 2001, 2001, 2001} sum=12004, /6 = 2000.666 -> rounds to 2001
+TEST_CASE("Rounding: average that lands on >= .5 rounds up, not truncates", "[touch_math]") {
 
-    constexpr auto coord = touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(x_samples, y_samples, SCREEN_W, SCREEN_H);
-
-    constexpr samples_t rounded_x_samples = make_filled_array(2001);
-    constexpr samples_t rounded_y_samples = make_filled_array(2001);
+    // Trimmed middle 6: {2000, 2000, 2001, 2001, 2001, 2001};
+    // sum = 12004; 12004 / 6 = 2000.666. Should round to 2001
+    constexpr samples_t rounded_x_samples = {0, 0, 2000, 2000, 2001, 2001, 2001, 2001, 4095, 4095};
+    constexpr samples_t rounded_y_samples = {0, 0, 2000, 2000, 2001, 2001, 2001, 2001, 4095, 4095};
 
     constexpr auto rounded_coord =
         touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(rounded_x_samples, rounded_y_samples, SCREEN_W, SCREEN_H);
+
+    constexpr samples_t x_samples = make_filled_array(2001);
+    constexpr samples_t y_samples = make_filled_array(2001);
+
+    constexpr auto coord = touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(x_samples, y_samples, SCREEN_W, SCREEN_H);
 
     TEST_ASSERT_EQUAL_UINT16(rounded_coord.x, coord.x);
     TEST_ASSERT_EQUAL_UINT16(rounded_coord.y, coord.y);

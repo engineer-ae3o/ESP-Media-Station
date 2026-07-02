@@ -28,11 +28,11 @@ namespace {
     template<size_t N>
     std::array<int32_t, N> make_sine_buf() {
         std::array<int32_t, N> buf{};
-        constexpr double       freq_hz     = 440.0;
-        constexpr double       sample_rate = 48'000.0;
+        constexpr float        freq_hz     = 440.0;
+        constexpr float        sample_rate = 48'000.0;
         for (size_t i = 0; i < N; i++) {
-            const double sample = std::sin(2.0 * std::numbers::pi * freq_hz * static_cast<double>(i) / sample_rate);
-            buf[i]              = static_cast<int32_t>(sample * static_cast<double>(INT32_MAX) * 0.5); // -6dB headroom
+            const auto sample = std::sin(2.0 * std::numbers::pi * freq_hz * static_cast<float>(i) / sample_rate);
+            buf[i]            = static_cast<int32_t>(sample * static_cast<float>(INT32_MAX) * 0.5); // -6dB headroom
         }
         return buf;
     }

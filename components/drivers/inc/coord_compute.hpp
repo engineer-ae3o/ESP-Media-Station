@@ -1,6 +1,6 @@
 #pragma once
 
-#include <span>
+#include <array>
 #include <numeric>
 #include <cstdint>
 #include <cstddef>
