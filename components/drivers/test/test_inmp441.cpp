@@ -38,6 +38,7 @@ namespace {
             vTaskDelay(pdMS_TO_TICKS(poll_interval_ms));
             waited_ms += poll_interval_ms;
         }
+
         return std::unexpected(ESP_ERR_TIMEOUT);
     }
 
@@ -65,10 +66,10 @@ TEST_CASE("Destructor cleans up correctly while streaming", "[inmp441][i2s]") {
         audio::mic::inmp441_t mic{};
         TEST_ESP_OK(mic.init(cfg));
         TEST_ESP_OK(mic.start_stream());
-        vTaskDelay(pdMS_TO_TICKS(100)); // let the state machine actually get into a read
-    } // ~inmp441_t() runs here; test hangs if cleanup's task-notify handshake is broken
+        vTaskDelay(pdMS_TO_TICKS(20)); // Let the state machine get into a read
+    } // ~inmp441_t() runs here; test hangs if cleanup's task notify handshake is broken
 
-    TEST_PASS(); // reaching this line at all is the assertion
+    TEST_PASS(); // Reaching this line at all is the assertion
 }
 
 TEST_CASE("Enable/disable rejects invalid transitions", "[inmp441][i2s]") {
@@ -80,13 +81,14 @@ TEST_CASE("Enable/disable rejects invalid transitions", "[inmp441][i2s]") {
 
     TEST_ESP_OK(mic.init(cfg)); // init() leaves the mic enabled
 
-    // Already enabled
+    // Already enabled. Should return invalid state
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.enable(true));
 
+    // Test double disabling
     TEST_ESP_OK(mic.enable(false));
-    // Already disabled
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.enable(false));
 
+    // Enable on final time before deinitializing
     TEST_ESP_OK(mic.enable(true));
     TEST_ESP_OK(mic.deinit());
 }
@@ -98,8 +100,7 @@ TEST_CASE("Cannot disable while streaming", "[inmp441][i2s]") {
     TEST_ESP_OK(mic.init(cfg));
     TEST_ESP_OK(mic.start_stream());
 
-    // enable(false) is blocked by m_is_streaming per the guard condition;
-    // stop_stream() has to happen first.
+    // Cannot disable while streaming is still on going
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.enable(false));
 
     TEST_ESP_OK(mic.stop_stream());
@@ -171,6 +172,10 @@ TEST_CASE("Streaming produces correctly sized buffers", "[inmp441][i2s]") {
 
     const auto buf = result.value();
     TEST_ASSERT_EQUAL(audio::mic::inmp441_t::RECV_BUF_SIZE_ELEMENTS, buf.size());
+    TEST_ASSERT_EQUAL(audio::mic::inmp441_t::RECV_BUF_SIZE_BYTES, buf.size_bytes());
+
+    static_assert(audio::mic::inmp441_t::RECV_BUF_SIZE_ELEMENTS == buf.size());
+    static_assert(audio::mic::inmp441_t::RECV_BUF_SIZE_BYTES == buf.size_bytes());
 
     TEST_ESP_OK(mic.return_buffer(buf.data()));
 
@@ -187,18 +192,20 @@ TEST_CASE("Double buffering alternates between the two buffers", "[inmp441][i2s]
 
     auto first = wait_for_filled_buffer(mic);
     TEST_ASSERT_TRUE_MESSAGE(first.has_value(), "First buffer never filled");
-    const int32_t* first_ptr = first.value().data();
+
+    const auto* first_ptr = first.value().data();
     TEST_ESP_OK(mic.return_buffer(first_ptr));
 
     auto second = wait_for_filled_buffer(mic);
     TEST_ASSERT_TRUE_MESSAGE(second.has_value(), "Second buffer never filled");
-    const int32_t* second_ptr = second.value().data();
 
-    // Confirms the state machine actually swaps buf1/buf2 instead of
-    // re-filling and re-returning the same one.
+    const auto* second_ptr = second.value().data();
+    TEST_ESP_OK(mic.return_buffer(second_ptr));
+
+    // Confirms the state machine actually swaps buf1/buf2
+    // instead of re-filling and re-returning the same one.
     TEST_ASSERT_NOT_EQUAL(first_ptr, second_ptr);
 
-    TEST_ESP_OK(mic.return_buffer(second_ptr));
     TEST_ESP_OK(mic.stop_stream());
     TEST_ESP_OK(mic.deinit());
 }
@@ -212,11 +219,12 @@ TEST_CASE("Returning a buffer twice fails the second time", "[inmp441][i2s]") {
 
     auto result = wait_for_filled_buffer(mic);
     TEST_ASSERT_TRUE_MESSAGE(result.has_value(), "No buffer filled within timeout");
-    const int32_t* ptr = result.value().data();
+    const auto* ptr = result.value().data();
 
     TEST_ESP_OK(mic.return_buffer(ptr));
-    // m_is_bufN_filled is now false, so the pointer matches neither
-    // "currently filled" branch and falls through to INVALID_ARG.
+
+    // The buffer has been returned, so re-returning
+    // it immediately should fail an invalid argument
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, mic.return_buffer(ptr));
 
     TEST_ESP_OK(mic.stop_stream());
@@ -226,10 +234,9 @@ TEST_CASE("Returning a buffer twice fails the second time", "[inmp441][i2s]") {
 TEST_CASE("Right channel selection initializes without error", "[inmp441][i2s]") {
     // This only proves the L/R gpio and slot_mask config path executes.
     // Confirming the mic is actually wired to the right channel of the bus
-    // and that audio content matches needs a real signal and a human
-    // listening or a scope on WS/DIN -- not something this test proves.
+    // would require more setup, and is beyond the scope of this test.
     audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config(/*use_right_chan=*/true);
+    constexpr auto        cfg = get_test_config(/* use_right_chan = */ true);
 
     TEST_ESP_OK(mic.init(cfg));
     TEST_ESP_OK(mic.start_stream());

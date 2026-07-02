@@ -121,7 +121,7 @@ namespace audio::amp {
             };
             TRY_WITH_FUNC(i2s_channel_init_std_mode(m_handle, &i2s_std_config), (void)cleanup_resources());
 
-            // The gain pin is optional. Leaving it unconnected means a gain of 9dB
+            // The gain pin is optional. Leaving it unconnected means a gain of 9dB on the MAX98357
             if constexpr (use_gain_pin) {
                 // Configure the gain gpio pin of the MAX98357 amplifier
                 const gpio_config_t gain_pin_config = {
@@ -138,7 +138,7 @@ namespace audio::amp {
                 // Leaving the gain pin unconnected gives a gain of 9dB
                 // LOW on the gain pin gives a gain of 12dB
                 // LOW on the gain pin with a 100k-ohm resistor gives a gain of 15dB
-                // To get a gain of either 3dB or 15dB, the resistor will have tobe put in place
+                // To get a gain of either 3dB or 15dB, the resistor will have to be put in place
                 if constexpr (gain == gain_t::dB_3 || gain == gain_t::dB_6) {
                     gpio_set_level(m_config.gain_pin, 1);
                 } else if constexpr (gain == gain_t::dB_9) {
@@ -327,7 +327,7 @@ namespace audio::amp {
 
             m_config = {};
 
-            // return the final error
+            // Return the final error
             return ret;
         }
     };

@@ -23,7 +23,7 @@ namespace {
         };
     }
 
-    // 100ms of a 440Hz sine wave at 48kHz, 32-bit signed samples, mono content
+    // 100ms of a 440Hz sine wave at 48kHz, 32 bit signed samples, mono content
     // duplicated where the driver needs stereo framing.
     template<size_t N>
     std::array<int32_t, N> make_sine_buf() {
@@ -37,8 +37,8 @@ namespace {
         return buf;
     }
 
-    using stereo_amp_t  = audio::amp::max98357a_t<audio::amp::gain_t::dB_9, audio::amp::mode_t::STEREO, true>;
-    using left_amp_t    = audio::amp::max98357a_t<audio::amp::gain_t::dB_9, audio::amp::mode_t::LEFT_CHANNEL, true>;
+    using stereo_amp_t  = audio::amp::max98357a_t<audio::amp::gain_t::dB_12, audio::amp::mode_t::STEREO, true>;
+    using left_amp_t    = audio::amp::max98357a_t<audio::amp::gain_t::dB_12, audio::amp::mode_t::LEFT_CHANNEL, true>;
     using no_gain_pin_t = audio::amp::max98357a_t<audio::amp::gain_t::dB_9, audio::amp::mode_t::STEREO, false>;
 
 } // namespace

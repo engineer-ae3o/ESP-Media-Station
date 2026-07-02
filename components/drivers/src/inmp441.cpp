@@ -1,9 +1,9 @@
 #include "inmp441.hpp"
 #include "utils.hpp"
 
-#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 
 #include <atomic>
 #include <utility>

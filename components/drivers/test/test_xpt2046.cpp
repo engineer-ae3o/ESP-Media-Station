@@ -152,8 +152,6 @@ TEST_CASE("Touch detection maps to expected screen coordinates", "[xpt2046][spi]
     TEST_ESP_OK(xpt.deinit());
 }
 
-// Confirms the queue survives more presses than fit in its depth in one burst
-// (queue_length from config) without corrupting state or dropping the driver.
 TEST_CASE("Multiple sequential presses are all captured", "[xpt2046][spi][manual]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
