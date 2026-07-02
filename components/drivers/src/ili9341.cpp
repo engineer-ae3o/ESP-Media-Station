@@ -32,9 +32,9 @@ namespace disp {
             .channel     = m_config.led_ledc_channel,
             .intr_type   = LEDC_INTR_DISABLE, // Deprecated, but here to satisfy the compiler
             .timer_sel   = m_config.led_ledc_timer,
-            .duty        = LEDC_RES_MAX_VAL,
-            .hpoint      = LEDC_RES_MAX_VAL - 1,
-            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
+            .duty        = LED_LEDC_RES_MAX_VAL,
+            .hpoint      = LED_LEDC_RES_MAX_VAL - 1,
+            .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
             .flags       = {.output_invert = 0},
             .deconfigure = false,
         };
@@ -68,13 +68,13 @@ namespace disp {
             .address_bits     = 0,
             .dummy_bits       = 0,
             .mode             = 0, // The ILI9341 accepts a CPOL-CPHA of 0-0
-            .clock_source     = SPI_CLK_SRC_DEFAULT,
+            .clock_source     = SPI_CLK_SRC_APB,
             .duty_cycle_pos   = 128, // A duty cycle on the positive clock of 50%/50%
             .cs_ena_pretrans  = 0,
             .cs_ena_posttrans = 0,
             .clock_speed_hz   = static_cast<int>(m_config.spi_clock_speed_hz),
             .input_delay_ns   = 0,
-            .sample_point     = SPI_SAMPLING_POINT_PHASE_1,
+            .sample_point     = SPI_SAMPLING_POINT_PHASE_0,
             .spics_io_num     = m_config.cs_pin,
             .flags            = 0,
             .queue_size       = TRANS_QUEUE_SIZE,
@@ -209,12 +209,13 @@ namespace disp {
             .duty_resolution = LED_LEDC_TIMER_RES,
             .timer_num       = timer,
             .freq_hz         = LED_LEDC_TIMER_FREQ_HZ,
-            .clk_cfg         = LEDC_AUTO_CLK,
+            .clk_cfg         = LEDC_USE_APB_CLK,
             .deconfigure     = false,
         };
 
         if (!init) {
             led_timer_config.deconfigure = true;
+            TRY(ledc_timer_pause(LEDC_LOW_SPEED_MODE, timer));
         }
 
         TRY(ledc_timer_config(&led_timer_config));
@@ -247,8 +248,8 @@ namespace disp {
             .channel     = m_config.led_ledc_channel,
             .intr_type   = LEDC_INTR_DISABLE, // Deprecated, but here to satisfy the compiler
             .timer_sel   = m_config.led_ledc_timer,
-            .duty        = LEDC_RES_MAX_VAL,
-            .hpoint      = LEDC_RES_MAX_VAL - 1,
+            .duty        = LED_LEDC_RES_MAX_VAL,
+            .hpoint      = LED_LEDC_RES_MAX_VAL - 1,
             .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_ALLOW_PD,
             .flags       = {.output_invert = 0},
             .deconfigure = true,

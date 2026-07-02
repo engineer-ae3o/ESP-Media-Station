@@ -12,7 +12,7 @@
 #include <utility>
 #include <expected>
 
-namespace mic {
+namespace audio::mic {
 
     struct config_t {
         bool use_right_chan{};
@@ -27,8 +27,7 @@ namespace mic {
 
     class inmp441_t {
     public:
-        // Tag for identification in ESP_LOGx macros
-        constexpr static auto* TAG{"INMP441"};
+        constexpr static auto* TAG = "INMP441";
 
         // Sampling rate of the I2S channel
         constexpr static size_t SAMPLE_RATE_HZ = 48'000;
@@ -177,4 +176,4 @@ namespace mic {
         }};
     };
 
-} // namespace mic
+} // namespace audio::mic

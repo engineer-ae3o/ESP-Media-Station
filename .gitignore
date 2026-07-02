@@ -10,6 +10,7 @@ sdkconfig.old
 *.hex
 *.map
 *.lst
+.vscode/c_cpp_properties.json
 .vscode/settings.json
 .cache/
 .clangd
