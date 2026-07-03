@@ -174,9 +174,6 @@ TEST_CASE("Streaming produces correctly sized buffers", "[inmp441][i2s]") {
     TEST_ASSERT_EQUAL(audio::mic::inmp441_t::RECV_BUF_SIZE_ELEMENTS, buf.size());
     TEST_ASSERT_EQUAL(audio::mic::inmp441_t::RECV_BUF_SIZE_BYTES, buf.size_bytes());
 
-    static_assert(audio::mic::inmp441_t::RECV_BUF_SIZE_ELEMENTS == buf.size());
-    static_assert(audio::mic::inmp441_t::RECV_BUF_SIZE_BYTES == buf.size_bytes());
-
     TEST_ESP_OK(mic.return_buffer(buf.data()));
 
     TEST_ESP_OK(mic.stop_stream());

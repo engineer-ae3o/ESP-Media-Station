@@ -37,9 +37,12 @@ namespace audio::amp {
         gpio_num_t sd_pin{GPIO_NUM_NC};
     };
 
-    template<gain_t gain, mode_t mode, bool use_gain_pin = true>
+    template<gain_t gain = gain_t::dB_9, mode_t mode = mode_t::STEREO, bool use_gain_pin = true>
     class max98357a_t {
     public:
+        // Sampling rate of the I2S channel
+        constexpr static size_t SAMPLE_RATE_HZ = 48'000;
+
         max98357a_t() = default;
 
         ~max98357a_t() noexcept {
@@ -251,6 +254,7 @@ namespace audio::amp {
 
             size_t num_of_bytes_sent{};
             TRY(i2s_channel_write(m_handle, data.data(), data.size_bytes(), &num_of_bytes_sent, timeout_ms));
+
             if (num_of_bytes_sent != data.size_bytes()) {
                 ESP_LOGE(TAG, "Error transmitting audio buffer. Only %zu bytes of %zu bytes sent", num_of_bytes_sent, data.size_bytes());
                 return ESP_ERR_TIMEOUT;
@@ -267,9 +271,6 @@ namespace audio::amp {
         i2s_chan_handle_t m_handle{};
 
         constexpr static auto* TAG = "MAX98357A";
-
-        // Sampling rate of the I2S channel
-        constexpr static size_t SAMPLE_RATE_HZ = 48'000;
 
         // Hardware limit on the DMA buffer size
         constexpr static size_t MAX_DMA_BUF_SIZE = 4092;
