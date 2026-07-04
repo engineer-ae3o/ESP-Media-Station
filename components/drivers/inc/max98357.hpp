@@ -78,7 +78,7 @@ namespace audio::amp {
                 .dma_frame_num        = DMA_FRAME_NUM,
                 .auto_clear_after_cb  = false,
                 .auto_clear_before_cb = false,
-                .allow_pd             = true,
+                .allow_pd             = false,
                 .intr_priority        = 5, // Moderately high
             };
             TRY(i2s_new_channel(&chan_config, &m_handle, nullptr));

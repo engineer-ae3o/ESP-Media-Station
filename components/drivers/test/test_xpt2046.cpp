@@ -41,6 +41,7 @@ namespace {
         spi_test_fixture_t() {
             constexpr utils::spi_bus_config_t bus_config = {
                 .bus            = config::XPT_SPI_BUS,
+                .flags          = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS,
                 .max_trans_size = config::XPT_MAX_TRANS_SIZE,
                 .mosi_pin       = config::XPT_MOSI_PIN,
                 .miso_pin       = config::XPT_MISO_PIN,

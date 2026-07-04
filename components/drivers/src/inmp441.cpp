@@ -40,7 +40,7 @@ namespace audio::mic {
             .dma_frame_num        = DMA_FRAME_NUM,
             .auto_clear_after_cb  = false, // Only used for TX
             .auto_clear_before_cb = false, // Only used for TX
-            .allow_pd             = true,
+            .allow_pd             = false,
             .intr_priority        = 4, // Average value
         };
         TRY_WITH_FUNC(i2s_new_channel(&chan_config, nullptr, &m_handle), cleanup());

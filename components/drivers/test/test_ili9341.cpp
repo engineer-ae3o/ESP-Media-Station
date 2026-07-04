@@ -1,3 +1,4 @@
+#include "driver/spi_common.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -33,6 +34,7 @@ namespace {
         spi_test_fixture_t() {
             constexpr utils::spi_bus_config_t bus_config = {
                 .bus            = config::ILI_SPI_BUS,
+                .flags          = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS,
                 .max_trans_size = config::ILI_MAX_TRANS_SIZE,
                 .mosi_pin       = config::ILI_MOSI_PIN,
                 .miso_pin       = GPIO_NUM_NC,
