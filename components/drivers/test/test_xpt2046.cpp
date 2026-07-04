@@ -32,8 +32,8 @@ namespace {
             .queue_length       = 10,
             .cs_pin             = config::XPT_CS_PIN,
             .irq_pin            = config::XPT_IRQ_PIN,
-            .screen_pixel_len_x = disp::ili9341_t::MAX_WIDTH,
-            .screen_pixel_len_y = disp::ili9341_t::MAX_HEIGHT,
+            .screen_pixel_len_x = display::ili9341_t::MAX_WIDTH,
+            .screen_pixel_len_y = display::ili9341_t::MAX_HEIGHT,
         };
     }
 
@@ -42,7 +42,7 @@ namespace {
             constexpr utils::spi_bus_config_t bus_config = {
                 .bus            = config::XPT_SPI_BUS,
                 .flags          = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS,
-                .max_trans_size = config::XPT_MAX_TRANS_SIZE,
+                .max_trans_size = 3, // Max transfer size is 24 bits
                 .mosi_pin       = config::XPT_MOSI_PIN,
                 .miso_pin       = config::XPT_MISO_PIN,
                 .sclk_pin       = config::XPT_CLK_PIN,

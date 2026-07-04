@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <utility>
 
-namespace disp {
+namespace display {
 
     struct config_t {
         // SPI configuration
@@ -133,4 +133,4 @@ namespace disp {
         esp_err_t send_data(std::span<const uint8_t> data);
     };
 
-} // namespace disp
+} // namespace display

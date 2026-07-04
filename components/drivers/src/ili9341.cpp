@@ -10,7 +10,7 @@
 #include <array>
 #include <utility>
 
-namespace disp {
+namespace display {
 
     ili9341_t::~ili9341_t() noexcept {
         if (m_is_initialized) {
@@ -153,9 +153,21 @@ namespace disp {
         // Send the memory write command
         TRY(send_cmd(0x2CU));
 
-        // Send the pixel data. The send_data(...) function expects uint8_t, so the
-        // byte count has to be multiplied by two since the data here is uint16_t
-        TRY(send_data({reinterpret_cast<const uint8_t*>(data.data()), (data.size() * 2)}));
+        // Safe value under hardware limit on transfer sizes
+        constexpr size_t MAX_TRANS_LENGTH_BYTES = 32'000;
+
+        size_t      bytes_remaining = data.size_bytes();
+        const auto* ptr             = reinterpret_cast<const uint8_t*>(data.data());
+
+        // Chunk the transfer
+        do {
+            const size_t bytes_to_send = std::min(bytes_remaining, MAX_TRANS_LENGTH_BYTES);
+            TRY(send_data({(ptr), bytes_to_send}));
+
+            bytes_remaining -= bytes_to_send;
+            ptr += bytes_to_send;
+
+        } while (bytes_remaining > 0);
 
         return ESP_OK;
     }
@@ -166,7 +178,7 @@ namespace disp {
         }
 
         // Calculate buffer size to use to fill the display
-        constexpr size_t total_mem_needed_bytes{MAX_WIDTH * MAX_HEIGHT * 2};
+        constexpr size_t total_mem_needed_bytes{MAX_WIDTH * MAX_HEIGHT * sizeof(uint16_t)};
         constexpr size_t num_of_times_to_send_color_buf{80};
         constexpr size_t mem_allocated_bytes{total_mem_needed_bytes / num_of_times_to_send_color_buf};
         constexpr size_t mem_for_16_bit_data{mem_allocated_bytes / 2};
@@ -445,4 +457,4 @@ namespace disp {
         return spi_device_transmit(m_device_handle, &trans);
     }
 
-} // namespace disp
+} // namespace display

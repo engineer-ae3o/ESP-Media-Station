@@ -37,7 +37,7 @@ namespace {
 
         for (size_t i = 0; i < elements; i++) {
             const auto sample = std::sin(2.0F * pi * freq_hz * static_cast<float>(i) / sample_rate);
-            buf[i]            = static_cast<int32_t>(sample * static_cast<float>(INT32_MAX) * 0.5F); // -6dB headroom
+            buf[i]            = static_cast<int32_t>(sample * static_cast<float>(INT32_MAX));
         }
 
         return buf;
@@ -130,7 +130,7 @@ TEST_CASE("send_audio_buf rejects calls before init or before power on", "[max98
     heap_caps_free(sine);
 }
 
-TEST_CASE("Stereo mode transmits a full-length buffer", "[max98357a][i2s][audible]") {
+TEST_CASE("Stereo mode transmits a full length buffer", "[max98357a][i2s][audible]") {
     stereo_amp_t   amp{};
     constexpr auto cfg = get_test_config();
 

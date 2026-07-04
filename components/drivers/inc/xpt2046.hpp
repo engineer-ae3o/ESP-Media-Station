@@ -7,6 +7,7 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 
+#include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_log.h"
 
@@ -37,7 +38,7 @@ namespace touch {
         uint16_t screen_pixel_len_y{};
     };
 
-    template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE | ESP_INTR_FLAG_LEVEL4)>
+    template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE)>
     class xpt2046_t {
     public:
         constexpr static uint8_t MAX_DATA_WRITE_BYTES = 3;
@@ -262,8 +263,8 @@ namespace touch {
             return static_cast<uint16_t>(((rx_buf[1] & 0x0FU) << 8) | rx_buf[2]);
         }
 
-        static void irq_handler(void* arg) {
-            auto& driver = *static_cast<xpt2046_t<>*>(arg);
+        static IRAM_ATTR void irq_handler(void* arg) {
+            auto& driver = *static_cast<xpt2046_t<init_gpio_isr_service, flags>*>(arg);
 
             // Mask interrupts on the irq pin to prevent false positives during conversion
             gpio_intr_disable(driver.m_config.irq_pin);
@@ -281,15 +282,15 @@ namespace touch {
         }
 
         static void conv_timer(TimerHandle_t handle) {
-            auto& driver = *static_cast<xpt2046_t<>*>(pvTimerGetTimerID(handle));
+            auto& driver = *static_cast<xpt2046_t<init_gpio_isr_service, flags>*>(pvTimerGetTimerID(handle));
 
             std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> x_samples{};
             std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> y_samples{};
 
             for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE; i++) {
                 // Read ADC samples for X and Y channels
-                const auto x_sample = driver.read_chan<channel_t::X_CHAN>();
-                const auto y_sample = driver.read_chan<channel_t::Y_CHAN>();
+                const auto x_sample = driver.template read_chan<channel_t::X_CHAN>();
+                const auto y_sample = driver.template read_chan<channel_t::Y_CHAN>();
 
                 if (!x_sample.has_value() || !y_sample.has_value()) {
                     // Enable the interrupt since an error occurred while getting samples
