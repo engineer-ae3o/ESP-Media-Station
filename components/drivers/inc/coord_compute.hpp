@@ -20,7 +20,7 @@ namespace touch {
     };
 
     template<size_t N, size_t TRIM_COUNT>
-    [[nodiscard]] constexpr uint16_t compute_trimmed_mean(std::array<uint16_t, N> samples, uint16_t screen_pixel_len) {
+    [[nodiscard]] constexpr uint16_t compute_trimmed_mean(std::array<uint16_t, N> samples) {
 
         static_assert(N > TRIM_COUNT * 2, "Not enough samples left after trimming both ends");
 
@@ -29,10 +29,10 @@ namespace touch {
         std::ranges::sort(samples);
 
         // Get the sum of all samples while trimming the TRIM_COUNT lowest and highest samples
-        const uint16_t x_sum = std::accumulate(samples.begin() + TRIM_COUNT, samples.end() - TRIM_COUNT, 0U);
+        const uint32_t sum = std::accumulate(samples.begin() + TRIM_COUNT, samples.end() - TRIM_COUNT, 0U);
 
         // Take the average and round to nearest instead of truncating
-        const uint16_t average = (x_sum + valid_sample_count / 2) / valid_sample_count;
+        const uint16_t average = (sum + valid_sample_count / 2) / valid_sample_count;
 
         return average;
     }
@@ -46,11 +46,11 @@ namespace touch {
                                                   uint16_t                screen_pixel_len_x,
                                                   uint16_t                screen_pixel_len_y) {
 
-        auto trimmed_x = compute_trimmed_mean<N, TRIM_COUNT>(x_samples, screen_pixel_len_x);
-        auto trimmed_y = compute_trimmed_mean<N, TRIM_COUNT>(y_samples, screen_pixel_len_y);
+        auto trimmed_x = compute_trimmed_mean<N, TRIM_COUNT>(x_samples);
+        auto trimmed_y = compute_trimmed_mean<N, TRIM_COUNT>(y_samples);
 
         const uint16_t clamped_x = std::clamp(trimmed_x, calibration_data_t::x_min, calibration_data_t::x_max);
-        const uint16_t clamped_y = std::clamp(trimmed_y, calibration_data_t::x_min, calibration_data_t::x_max);
+        const uint16_t clamped_y = std::clamp(trimmed_y, calibration_data_t::y_min, calibration_data_t::y_max);
 
         // Linearly interpolate into screen pixel space. Subtract 1 from
         // the screen pixel length since screen pixels are zero indexed.

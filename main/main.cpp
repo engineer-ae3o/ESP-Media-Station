@@ -1,4 +1,5 @@
 #include "freertos/FreeRTOS.h"
+#include "freertos/projdefs.h"
 #include "freertos/task.h"
 
 #include "driver/spi_master.h"
@@ -61,10 +62,11 @@ namespace {
         touch::xpt2046_t xpt2046;
         ESP_ERROR_CHECK(xpt2046.init(xpt_config));
         auto* event_queue = xpt2046.get_event_queue();
-        assert(event_queue != nullptr);
+        assert(event_queue);
 
         while (true) {
-            vTaskDelay(portMAX_DELAY);
+            xpt2046.run_calibration();
+            vTaskDelay(pdMS_TO_TICKS(5'000));
         }
     }
 
@@ -118,7 +120,7 @@ extern "C" {
             assert(0);
         }
 
-        ret = xTaskCreate(audio_task, "Audio Task", 4096, {}, 5, {});
+        //ret = xTaskCreate(audio_task, "Audio Task", 4096, {}, 5, {});
         if (ret != pdPASS) {
             ESP_LOGE("MAIN", "Failed to create the audio Task");
             assert(0);

@@ -110,7 +110,7 @@ TEST_CASE("No spurious touch events when idle", "[xpt2046][spi][manual]") {
 
     TEST_ESP_OK(xpt.init(cfg));
 
-    ESP_LOGI("TOUCH_TEST", ">>> Do NOT touch the screen for the next 5 seconds...");
+    ESP_LOGI("TOUCH_TEST", "Do NOT touch the screen for the next 5 seconds");
 
     touch::coord_t coord{};
     const auto     ret = xQueueReceive(xpt.get_event_queue(), &coord, pdMS_TO_TICKS(5000));

@@ -168,6 +168,57 @@ namespace touch {
             return m_event_queue;
         }
 
+        /**
+         * @brief Runs the calibration routine and logs the values for all 4 corners to the monitor.
+         *
+         * @note Not be used during normal operation.
+         */
+        void run_calibration() {
+
+            // No point in letting interrupts be active since the measurement is synchronous
+            gpio_intr_disable(m_config.irq_pin);
+
+            constexpr std::array<const char*, NUM_CORNERS_TO_GET_CALIB> corners = {
+                "top left corner",
+                "top right corner",
+                "bottom left corner",
+                "bottom right corner",
+            };
+
+            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB> x_samples{};
+            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB> y_samples{};
+
+            for (const auto& corner : corners) {
+
+                ESP_LOGI(TAG, "Touch the %s of the screen", corner);
+                vTaskDelay(pdMS_TO_TICKS(5000));
+
+                for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB; i++) {
+                    // Read ADC samples for X and Y channels
+                    const auto x_sample = read_chan<channel_t::X_CHAN>();
+                    const auto y_sample = read_chan<channel_t::Y_CHAN>();
+
+                    // We can skip this sample if an error occurred since it'll get filtered out
+                    if (!x_sample.has_value() || !y_sample.has_value()) {
+                        continue;
+                    }
+
+                    x_samples[i] = x_sample.value();
+                    y_samples[i] = y_sample.value();
+                }
+
+                // Get the trimmed mean for the set of samples
+                const uint16_t x_sample = compute_trimmed_mean<NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB, TRIM_COUNT_DURING_CALIB>(x_samples);
+                const uint16_t y_sample = compute_trimmed_mean<NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB, TRIM_COUNT_DURING_CALIB>(y_samples);
+
+                ESP_LOGI(TAG, "XPT2046 ADC calibration data for %s is (%u, %u)", corner, x_sample, y_sample);
+
+                vTaskDelay(pdMS_TO_TICKS(5000));
+            }
+
+            gpio_intr_enable(m_config.irq_pin);
+        }
+
     private:
         bool     m_is_initialized{};
         config_t m_config{};
@@ -193,8 +244,9 @@ namespace touch {
         constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 10;
         constexpr static uint8_t TRIM_COUNT             = 2;
 
-        constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB = NUM_OF_TIMES_TO_SAMPLE * 5;
-        constexpr static uint8_t TRIM_COUNT_DURING_CALIB             = TRIM_COUNT * 5;
+        constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB = 100;
+        constexpr static uint8_t TRIM_COUNT_DURING_CALIB             = 30;
+        constexpr static uint8_t NUM_CORNERS_TO_GET_CALIB            = 4;
 
         enum class channel_t : uint8_t {
             X_CHAN = 0b101U,
@@ -262,7 +314,7 @@ namespace touch {
             }
 
             // Get the lower 12 bits of the received data and put in lower bit positions
-            return static_cast<uint16_t>(((rx_buf[1] & 0x0FU) << 8) | rx_buf[2]);
+            return static_cast<uint16_t>((((rx_buf[1] << 8) | rx_buf[2]) >> 3) & 0x0FFF);
         }
 
         static void irq_handler(void* arg) {
@@ -285,6 +337,8 @@ namespace touch {
 
         static void conv_timer(TimerHandle_t handle) {
             auto& driver = *static_cast<xpt2046_t<init_gpio_isr_service, flags>*>(pvTimerGetTimerID(handle));
+
+            ESP_LOGI(TAG, "Conversion timer running");
 
             std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> x_samples{};
             std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> y_samples{};
@@ -315,41 +369,6 @@ namespace touch {
             if (ret == pdPASS) {
                 portYIELD();
             }
-        }
-
-        void run_calibration() {
-
-            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB> x_samples{};
-            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB> y_samples{};
-
-            ESP_LOGI(TAG, "Touch the top left corner of the screen");
-
-            for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB; i++) {
-                // Read ADC samples for X and Y channels
-                const auto x_sample = read_chan<channel_t::X_CHAN>();
-                const auto y_sample = read_chan<channel_t::Y_CHAN>();
-
-                if (!x_sample.has_value() || !y_sample.has_value()) {
-                    // Enable the interrupt since an error occurred while getting samples
-                    gpio_intr_enable(m_config.irq_pin);
-                    return;
-                }
-
-                x_samples[i] = x_sample.value();
-                y_samples[i] = y_sample.value();
-            }
-
-            xQueueReset(m_event_queue);
-            vTaskDelay(pdMS_TO_TICKS(2000));
-
-            ESP_LOGI(TAG, "Touch the top right corner of the screen");
-            vTaskDelay(pdMS_TO_TICKS(2000));
-
-            ESP_LOGI(TAG, "Touch the bottom left corner of the screen");
-            vTaskDelay(pdMS_TO_TICKS(2000));
-
-            ESP_LOGI(TAG, "Touch the bottom right corner of the screen");
-            vTaskDelay(pdMS_TO_TICKS(2000));
         }
     };
 

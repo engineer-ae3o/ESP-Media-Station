@@ -203,7 +203,7 @@ namespace audio::amp {
                     // Whereas if we wanted to use the right channel or stereo modes, we would have to connect
                     // resistors of 100k-ohm and 200k-ohm respectively. This lets the resistor bias the pins to
                     // 1/2 * Vdd and 1/3 * Vdd respectively, which is what the MAX98357 needs to use right or mixed
-                    // stereo mode. We also have to make the pins input to prevent the mESP32 from driving the pin.
+                    // stereo mode. We also have to make the pins input to prevent the ESP32 from driving the pin.
                     const gpio_config_t sd_pin_config = {
                         .pin_bit_mask = static_cast<uint64_t>(1ULL << std::to_underlying(m_config.sd_pin)),
                         .mode         = GPIO_MODE_INPUT,
