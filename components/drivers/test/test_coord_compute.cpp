@@ -15,7 +15,7 @@ namespace {
 
     using samples_t = std::array<uint16_t, MAX_SAMPLE_LEN>;
 
-    constexpr samples_t make_filled_array(uint16_t value) {
+    consteval samples_t make_filled_array(uint16_t value) {
         samples_t arr{};
         arr.fill(value);
         return arr;

@@ -38,7 +38,7 @@ namespace touch {
         uint16_t screen_pixel_len_y{};
     };
 
-    template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_EDGE)>
+    template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_LEVEL1)>
     class xpt2046_t {
     public:
         constexpr static uint8_t MAX_DATA_WRITE_BYTES = 3;
@@ -193,6 +193,9 @@ namespace touch {
         constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 10;
         constexpr static uint8_t TRIM_COUNT             = 2;
 
+        constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB = NUM_OF_TIMES_TO_SAMPLE * 5;
+        constexpr static uint8_t TRIM_COUNT_DURING_CALIB             = TRIM_COUNT * 5;
+
         enum class channel_t : uint8_t {
             X_CHAN = 0b101U,
             Y_CHAN = 0b001U,
@@ -253,8 +256,7 @@ namespace touch {
                 .rx_buffer        = rx_buf.data(),
             };
 
-            // We're sending 3 bytes, setup overhead for DMA not worth it here
-            auto ret = spi_device_polling_transmit(m_device_handle, &trans);
+            auto ret = spi_device_transmit(m_device_handle, &trans);
             if (ret != ESP_OK) {
                 return std::nullopt;
             }
@@ -263,7 +265,7 @@ namespace touch {
             return static_cast<uint16_t>(((rx_buf[1] & 0x0FU) << 8) | rx_buf[2]);
         }
 
-        static IRAM_ATTR void irq_handler(void* arg) {
+        static void irq_handler(void* arg) {
             auto& driver = *static_cast<xpt2046_t<init_gpio_isr_service, flags>*>(arg);
 
             // Mask interrupts on the irq pin to prevent false positives during conversion
@@ -276,7 +278,7 @@ namespace touch {
             if (higher_priority_task_woken == pdTRUE) {
                 portYIELD_FROM_ISR();
             } else {
-                // Re-enable the interrupt since the timer failed to be started and won't enable it
+                // Reenable the interrupt since the timer failed to be started and won't enable it
                 gpio_intr_enable(driver.m_config.irq_pin);
             }
         }
@@ -313,6 +315,41 @@ namespace touch {
             if (ret == pdPASS) {
                 portYIELD();
             }
+        }
+
+        void run_calibration() {
+
+            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB> x_samples{};
+            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB> y_samples{};
+
+            ESP_LOGI(TAG, "Touch the top left corner of the screen");
+
+            for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB; i++) {
+                // Read ADC samples for X and Y channels
+                const auto x_sample = read_chan<channel_t::X_CHAN>();
+                const auto y_sample = read_chan<channel_t::Y_CHAN>();
+
+                if (!x_sample.has_value() || !y_sample.has_value()) {
+                    // Enable the interrupt since an error occurred while getting samples
+                    gpio_intr_enable(m_config.irq_pin);
+                    return;
+                }
+
+                x_samples[i] = x_sample.value();
+                y_samples[i] = y_sample.value();
+            }
+
+            xQueueReset(m_event_queue);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+
+            ESP_LOGI(TAG, "Touch the top right corner of the screen");
+            vTaskDelay(pdMS_TO_TICKS(2000));
+
+            ESP_LOGI(TAG, "Touch the bottom left corner of the screen");
+            vTaskDelay(pdMS_TO_TICKS(2000));
+
+            ESP_LOGI(TAG, "Touch the bottom right corner of the screen");
+            vTaskDelay(pdMS_TO_TICKS(2000));
         }
     };
 

@@ -14,12 +14,16 @@ namespace {
     consteval auto get_test_config(bool use_right_chan = false) {
         return audio::mic::config_t{
             .use_right_chan = use_right_chan,
-            .error_cb       = nullptr,
-            .chip_en_pin    = config::INMP_CHIPEN_PIN,
-            .bclk_pin       = config::INMP_BCLK_PIN,
-            .din_pin        = config::INMP_DIN_PIN,
-            .l_r_pin        = config::INMP_L_R_PIN,
-            .ws_pin         = config::INMP_WS_PIN,
+            .error_cb =
+                [](esp_err_t err) {
+                    ESP_LOGE("TEST", "Error occurred during INMP test: %s", esp_err_to_name(err));
+                    TEST_FAIL();
+                },
+            .chip_en_pin = config::INMP_CHIPEN_PIN,
+            .bclk_pin    = config::INMP_BCLK_PIN,
+            .din_pin     = config::INMP_DIN_PIN,
+            .l_r_pin     = config::INMP_L_R_PIN,
+            .ws_pin      = config::INMP_WS_PIN,
         };
     }
 

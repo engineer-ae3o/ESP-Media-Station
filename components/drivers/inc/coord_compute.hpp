@@ -19,6 +19,24 @@ namespace touch {
         constexpr static uint16_t y_max{3750};
     };
 
+    template<size_t N, size_t TRIM_COUNT>
+    [[nodiscard]] constexpr uint16_t compute_trimmed_mean(std::array<uint16_t, N> samples, uint16_t screen_pixel_len) {
+
+        static_assert(N > TRIM_COUNT * 2, "Not enough samples left after trimming both ends");
+
+        constexpr size_t valid_sample_count = N - (TRIM_COUNT * 2);
+
+        std::ranges::sort(samples);
+
+        // Get the sum of all samples while trimming the TRIM_COUNT lowest and highest samples
+        const uint16_t x_sum = std::accumulate(samples.begin() + TRIM_COUNT, samples.end() - TRIM_COUNT, 0U);
+
+        // Take the average and round to nearest instead of truncating
+        const uint16_t average = (x_sum + valid_sample_count / 2) / valid_sample_count;
+
+        return average;
+    }
+
     // Raw ADC samples in, screen coordinate out. Sorts, trims TRIM_COUNT
     // outliers off each end, averages what's left, clamps to calibration bounds,
     // then linearly interpolates into screen pixel space.
@@ -28,23 +46,11 @@ namespace touch {
                                                   uint16_t                screen_pixel_len_x,
                                                   uint16_t                screen_pixel_len_y) {
 
-        static_assert(N > TRIM_COUNT * 2, "Not enough samples left after trimming both ends");
+        auto trimmed_x = compute_trimmed_mean<N, TRIM_COUNT>(x_samples, screen_pixel_len_x);
+        auto trimmed_y = compute_trimmed_mean<N, TRIM_COUNT>(y_samples, screen_pixel_len_y);
 
-        constexpr size_t valid_sample_count = N - (TRIM_COUNT * 2);
-
-        std::ranges::sort(x_samples);
-        std::ranges::sort(y_samples);
-
-        // Get the sum of all samples while trimming the TRIM_COUNT lowest and highest samples
-        const uint16_t x_sum = std::accumulate(x_samples.begin() + TRIM_COUNT, x_samples.end() - TRIM_COUNT, 0U);
-        const uint16_t y_sum = std::accumulate(y_samples.begin() + TRIM_COUNT, y_samples.end() - TRIM_COUNT, 0U);
-
-        // Round to nearest instead of truncating
-        const uint16_t average_x = (x_sum + valid_sample_count / 2) / valid_sample_count;
-        const uint16_t average_y = (y_sum + valid_sample_count / 2) / valid_sample_count;
-
-        const uint16_t clamped_x = std::clamp(average_x, calibration_data_t::x_min, calibration_data_t::x_max);
-        const uint16_t clamped_y = std::clamp(average_y, calibration_data_t::y_min, calibration_data_t::y_max);
+        const uint16_t clamped_x = std::clamp(trimmed_x, calibration_data_t::x_min, calibration_data_t::x_max);
+        const uint16_t clamped_y = std::clamp(trimmed_y, calibration_data_t::x_min, calibration_data_t::x_max);
 
         // Linearly interpolate into screen pixel space. Subtract 1 from
         // the screen pixel length since screen pixels are zero indexed.

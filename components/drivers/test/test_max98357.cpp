@@ -72,7 +72,7 @@ TEST_CASE("Deinit while powered on cleans up without error", "[max98357a][i2s]")
     constexpr auto cfg = get_test_config();
 
     TEST_ESP_OK(amp.init(cfg));
-    TEST_ESP_OK(amp.power_on(true));
+    TEST_ESP_OK(amp.power_on());
 
     // deinit's cleanup_resources() powers down internally before deleting
     // the I2S channel; this shouldn't require an explicit power_on(false) first.
@@ -85,9 +85,9 @@ TEST_CASE("Power on/off redundant calls are rejected", "[max98357a][i2s]") {
 
     TEST_ESP_OK(amp.init(cfg));
 
-    TEST_ESP_OK(amp.power_on(true));
+    TEST_ESP_OK(amp.power_on());
     // Already on: should fail with invalid state, not silently succeed
-    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, amp.power_on(true));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, amp.power_on());
 
     TEST_ESP_OK(amp.power_on(false));
     // Already off: should fail with invalid state
@@ -101,7 +101,13 @@ TEST_CASE("Amp with no gain pin configured still inits and cleans up", "[max9835
     constexpr auto cfg = get_test_config();
 
     TEST_ESP_OK(amp.init(cfg));
-    TEST_ESP_OK(amp.power_on(true));
+    TEST_ESP_OK(amp.power_on());
+
+    constexpr size_t len = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 5; // 2.5s of audio (since stereo mode)
+    auto*            buf = make_sine_buf(len);
+
+    TEST_ESP_OK(amp.send_audio_buf({buf, len}));
+
     TEST_ESP_OK(amp.power_on(false));
     TEST_ESP_OK(amp.deinit());
 }
@@ -110,7 +116,7 @@ TEST_CASE("send_audio_buf rejects calls before init or before power on", "[max98
     stereo_amp_t   amp{};
     constexpr auto cfg = get_test_config();
 
-    constexpr size_t len  = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 0.01; // 10ms of data @ 48kHz
+    constexpr size_t len  = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 2; // 1s of data (since stereo mode)
     auto*            sine = make_sine_buf(len);
 
     // Not initialized at all
@@ -121,7 +127,7 @@ TEST_CASE("send_audio_buf rejects calls before init or before power on", "[max98
     // Initialized but not powered on
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, amp.send_audio_buf({sine, len}));
 
-    TEST_ESP_OK(amp.power_on(true));
+    TEST_ESP_OK(amp.power_on());
     TEST_ESP_OK(amp.send_audio_buf({sine, len}));
 
     TEST_ESP_OK(amp.power_on(false));
@@ -135,10 +141,8 @@ TEST_CASE("Stereo mode transmits a full length buffer", "[max98357a][i2s][audibl
     constexpr auto cfg = get_test_config();
 
     TEST_ESP_OK(amp.init(cfg));
-    TEST_ESP_OK(amp.power_on(true));
+    TEST_ESP_OK(amp.power_on());
 
-    // 5 seconds of tone. Confirms send_audio_buf's byte count check against a
-    // buffer that spans many DMA descriptor refills, not just one.
     constexpr size_t len = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 5;
     auto*            buf = make_sine_buf(len);
 
@@ -150,15 +154,15 @@ TEST_CASE("Stereo mode transmits a full length buffer", "[max98357a][i2s][audibl
     heap_caps_free(buf);
 }
 
-TEST_CASE("Left and right channel modes initializes and transmits", "[max98357a][i2s]") {
+TEST_CASE("Left and right channel modes initialize and transmit", "[max98357a][i2s][audible]") {
     // Left channel
     left_amp_t     left_amp{};
     constexpr auto left_cfg = get_test_config();
 
     TEST_ESP_OK(left_amp.init(left_cfg));
-    TEST_ESP_OK(left_amp.power_on(true));
+    TEST_ESP_OK(left_amp.power_on());
 
-    constexpr size_t left_len = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 0.1; // 100ms
+    constexpr size_t left_len = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 2; // 2s
     auto*            left_buf = make_sine_buf(left_len);
 
     TEST_ESP_OK(left_amp.send_audio_buf({left_buf, left_len}));
@@ -173,9 +177,9 @@ TEST_CASE("Left and right channel modes initializes and transmits", "[max98357a]
     constexpr auto right_cfg = get_test_config();
 
     TEST_ESP_OK(right_amp.init(right_cfg));
-    TEST_ESP_OK(right_amp.power_on(true));
+    TEST_ESP_OK(right_amp.power_on());
 
-    constexpr size_t right_len = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 0.1; // 100ms
+    constexpr size_t right_len = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 2; // 2s
     auto*            right_buf = make_sine_buf(right_len);
 
     TEST_ESP_OK(right_amp.send_audio_buf({right_buf, right_len}));
@@ -186,21 +190,21 @@ TEST_CASE("Left and right channel modes initializes and transmits", "[max98357a]
     heap_caps_free(right_buf);
 }
 
-TEST_CASE("Timeout is surfaced when the buffer can't fully drain in time", "[max98357a][i2s]") {
+TEST_CASE("Timeout is surfaced when the buffer can't fully drain in time", "[max98357a][i2s][audible]") {
     stereo_amp_t   amp{};
     constexpr auto cfg = get_test_config();
 
     TEST_ESP_OK(amp.init(cfg));
-    TEST_ESP_OK(amp.power_on(true));
+    TEST_ESP_OK(amp.power_on());
 
-    // Large buffer, timeout too small: DMA can't move it all in time, so
+    // Large buffer, timeout too small. DMA can't move it all in time, so
     // send_audio_buf's byte count check should catch the short write and
     // return ESP_ERR_TIMEOUT rather than reporting success on a partial send.
 
-    constexpr size_t len = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 5; // 5s of data
+    constexpr size_t len = audio::amp::max98357a_t<>::SAMPLE_RATE_HZ * 5; // 2.5s of data (since stereo mode)
     auto*            buf = make_sine_buf(len);
 
-    const auto ret = amp.send_audio_buf({buf, len}, 4); // Timeout of 4s
+    const auto ret = amp.send_audio_buf({buf, len}, 2); // Timeout of 2s
     TEST_ASSERT_EQUAL(ESP_ERR_TIMEOUT, ret);
 
     TEST_ESP_OK(amp.power_on(false));

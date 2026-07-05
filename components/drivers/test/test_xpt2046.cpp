@@ -110,11 +110,40 @@ TEST_CASE("No spurious touch events when idle", "[xpt2046][spi][manual]") {
 
     TEST_ESP_OK(xpt.init(cfg));
 
-    ESP_LOGI("XPT_TEST", ">>> Do NOT touch the screen for the next 5 seconds...");
+    ESP_LOGI("TOUCH_TEST", ">>> Do NOT touch the screen for the next 5 seconds...");
 
     touch::coord_t coord{};
     const auto     ret = xQueueReceive(xpt.get_event_queue(), &coord, pdMS_TO_TICKS(5000));
     TEST_ASSERT_EQUAL_MESSAGE(pdFALSE, ret, "Received an unexpected touch event while idle (supposedly)");
+
+    TEST_ESP_OK(xpt.deinit());
+}
+
+TEST_CASE("Multiple sequential presses are all captured", "[xpt2046][spi][manual]") {
+    [[maybe_unused]] spi_test_fixture_t spi_bus{};
+
+    touch::xpt2046_t<> xpt{};
+    constexpr auto     cfg = get_test_config();
+
+    TEST_ESP_OK(xpt.init(cfg));
+    auto* event_queue = xpt.get_event_queue();
+    TEST_ASSERT_NOT_NULL(event_queue);
+    xQueueReset(event_queue);
+
+    constexpr size_t press_count = 5;
+    ESP_LOGI("TOUCH_TEST", "Press anywhere on the screen %d times, pausing briefly between each press", press_count);
+
+    for (size_t i = 0; i < press_count; i++) {
+        touch::coord_t coord{};
+        const auto     received = xQueueReceive(event_queue, &coord, pdMS_TO_TICKS(TOUCH_TIMEOUT_MS));
+
+        std::array<char, 64> msg{};
+        (void)std::format_to(msg.data(), "Timed out waiting for press {} of {}", i + 1, press_count);
+        TEST_ASSERT_EQUAL_MESSAGE(pdTRUE, received, msg.data());
+
+        TEST_ASSERT_TRUE(coord.x < cfg.screen_pixel_len_x);
+        TEST_ASSERT_TRUE(coord.y < cfg.screen_pixel_len_y);
+    }
 
     TEST_ESP_OK(xpt.deinit());
 }
@@ -144,39 +173,10 @@ TEST_CASE("Touch detection maps to expected screen coordinates", "[xpt2046][spi]
 
     for (const auto& target : targets) {
         xQueueReset(event_queue); // Drop any stale event from a prior target
-        ESP_LOGI("XPT_TEST", ">>> Press the %s of the screen ~(%u, %u) now...", target.label, target.x, target.y);
+        ESP_LOGI("TOUCH_TEST", "Press the %s of the screen ~(%u, %u) now...", target.label, target.x, target.y);
 
         const auto coord = wait_for_press(event_queue);
         assert_near({target.x, target.y}, coord);
-    }
-
-    TEST_ESP_OK(xpt.deinit());
-}
-
-TEST_CASE("Multiple sequential presses are all captured", "[xpt2046][spi][manual]") {
-    [[maybe_unused]] spi_test_fixture_t spi_bus{};
-
-    touch::xpt2046_t<> xpt{};
-    constexpr auto     cfg = get_test_config();
-
-    TEST_ESP_OK(xpt.init(cfg));
-    auto* event_queue = xpt.get_event_queue();
-    TEST_ASSERT_NOT_NULL(event_queue);
-    xQueueReset(event_queue);
-
-    constexpr int press_count = 5;
-    ESP_LOGI("XPT_TEST", ">>> Press anywhere on the screen %d times, pausing briefly between each press", press_count);
-
-    for (int i = 0; i < press_count; i++) {
-        touch::coord_t coord{};
-        const auto     received = xQueueReceive(event_queue, &coord, pdMS_TO_TICKS(TOUCH_TIMEOUT_MS));
-
-        std::array<char, 64> msg{};
-        (void)std::format_to(msg.begin(), "Timed out waiting for press {} of {}", i + 1, press_count);
-        TEST_ASSERT_EQUAL_MESSAGE(pdTRUE, received, msg.data());
-
-        TEST_ASSERT_TRUE(coord.x < cfg.screen_pixel_len_x);
-        TEST_ASSERT_TRUE(coord.y < cfg.screen_pixel_len_y);
     }
 
     TEST_ESP_OK(xpt.deinit());

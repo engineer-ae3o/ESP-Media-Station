@@ -13,6 +13,7 @@ namespace config {
     // Shared SPI2 bus settings
     constexpr inline spi_host_device_t SHARED_SPI_BUS = SPI2_HOST;
 
+    // IOMUX  pins for SPI2
     constexpr inline gpio_num_t SHARED_MOSI_PIN = GPIO_NUM_11;
     constexpr inline gpio_num_t SHARED_CLK_PIN  = GPIO_NUM_12;
     constexpr inline gpio_num_t SHARED_MISO_PIN = GPIO_NUM_13;
