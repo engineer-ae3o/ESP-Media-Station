@@ -253,7 +253,7 @@ namespace touch {
 
         constexpr static auto* TAG = "XPT2046";
 
-        constexpr static uint8_t DEBOUNCE_MS            = 10;
+        constexpr static uint8_t DEBOUNCE_MS            = 20;
         constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 15;
         constexpr static uint8_t TRIM_COUNT             = 5;
 
@@ -372,7 +372,14 @@ namespace touch {
                     break;
                 }
 
-                ESP_LOGI(TAG, "Conversion task running");
+                // Debounce delay
+                vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_MS));
+
+                // If the pin is high, this was a bounce. Ignore
+                if (gpio_get_level(driver.m_config.irq_pin)) {
+                    gpio_intr_enable(driver.m_config.irq_pin);
+                    continue;
+                }
 
                 std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> x_samples{};
                 std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> y_samples{};
