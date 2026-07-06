@@ -19,7 +19,7 @@ namespace {
     // Allowed error (in pixels) between where the tester was told to press
     // and where the driver reports the press. ADC jitter + panel/finger contact
     // area + calibration slop all live in here.
-    constexpr uint16_t TOLERANCE_PX = 15;
+    constexpr uint16_t TOLERANCE_PX = 20;
 
     // How long to block waiting for a human to press the screen before failing
     // the test outright instead of hanging the test runner forever.

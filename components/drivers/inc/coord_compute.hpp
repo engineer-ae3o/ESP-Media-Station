@@ -13,10 +13,10 @@ namespace touch {
     };
 
     struct calibration_data_t {
-        constexpr static uint16_t x_min{375};
-        constexpr static uint16_t y_min{375};
-        constexpr static uint16_t x_max{3750};
-        constexpr static uint16_t y_max{3750};
+        constexpr static uint16_t x_min{476};
+        constexpr static uint16_t x_max{3668};
+        constexpr static uint16_t y_min{359};
+        constexpr static uint16_t y_max{3565};
     };
 
     template<size_t N, size_t TRIM_COUNT>
@@ -54,11 +54,13 @@ namespace touch {
 
         // Linearly interpolate into screen pixel space. Subtract 1 from
         // the screen pixel length since screen pixels are zero indexed.
+        // Standard linear interpolation for X (Low ADC value = left of screen)
         const uint16_t screen_x =
             (clamped_x - calibration_data_t::x_min) * (screen_pixel_len_x - 1) / (calibration_data_t::x_max - calibration_data_t::x_min);
 
+        // Invert Y because high ADC value = low screen coordinate (Top side)
         const uint16_t screen_y =
-            (clamped_y - calibration_data_t::y_min) * (screen_pixel_len_y - 1) / (calibration_data_t::y_max - calibration_data_t::y_min);
+            (calibration_data_t::y_max - clamped_y) * (screen_pixel_len_y - 1) / (calibration_data_t::y_max - calibration_data_t::y_min);
 
         return {screen_x, screen_y};
     }

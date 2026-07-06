@@ -1,8 +1,8 @@
 #pragma once
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/queue.h"
-#include "freertos/timers.h"
 
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
@@ -11,10 +11,12 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
+#include "hal/gpio_types.h"
 #include "utils.hpp"
 #include "coord_compute.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <utility>
 #include <optional>
@@ -36,9 +38,13 @@ namespace touch {
         // Pixel length of the display
         uint16_t screen_pixel_len_x{};
         uint16_t screen_pixel_len_y{};
+
+        // Conversion task details
+        size_t task_priority{8};
+        size_t task_stack_size{2048};
     };
 
-    template<bool init_gpio_isr_service = true, int flags = (ESP_INTR_FLAG_LEVEL1)>
+    template<bool init_gpio_isr_service = true, int flags = ESP_INTR_FLAG_LEVEL1>
     class xpt2046_t {
     public:
         constexpr static uint8_t MAX_DATA_WRITE_BYTES = 3;
@@ -47,7 +53,7 @@ namespace touch {
 
         ~xpt2046_t() noexcept {
             if (m_is_initialized) {
-                cleanup_resources();
+                cleanup();
             }
         }
 
@@ -69,6 +75,13 @@ namespace touch {
             }
 
             m_config = config;
+
+            // Create the task first since it handles cleanup for everything else
+            auto ret =
+                xTaskCreate(conv_task, "Conversion Task", m_config.task_stack_size, this, m_config.task_priority, &m_conv_task_handle);
+            if (ret != pdPASS || m_conv_task_handle == nullptr) {
+                return ESP_ERR_NO_MEM;
+            }
 
             // Configure the XPT2046 as an SPI device
             const spi_device_interface_config_t device_config = {
@@ -107,7 +120,7 @@ namespace touch {
                 .tx_buffer        = &control_byte,
                 .rx_buffer        = nullptr,
             };
-            TRY_WITH_FUNC(spi_device_transmit(m_device_handle, &trans), cleanup_resources());
+            TRY_WITH_FUNC(spi_device_transmit(m_device_handle, &trans), cleanup());
 
             // Configure the IRQ pin
             const gpio_config_t irq_config = {
@@ -115,23 +128,21 @@ namespace touch {
                 .mode         = GPIO_MODE_INPUT,
                 .pull_up_en   = GPIO_PULLUP_ENABLE,
                 .pull_down_en = GPIO_PULLDOWN_DISABLE,
-                .intr_type    = GPIO_INTR_LOW_LEVEL,
+                .intr_type    = GPIO_INTR_NEGEDGE,
             };
-            TRY_WITH_FUNC(gpio_config(&irq_config), cleanup_resources());
+            TRY_WITH_FUNC(gpio_config(&irq_config), cleanup());
 
             if constexpr (init_gpio_isr_service) {
-                TRY_WITH_FUNC(gpio_install_isr_service(flags), cleanup_resources());
+                TRY_WITH_FUNC(gpio_install_isr_service(flags), cleanup());
             }
 
             // Add the ISR for the IRQ pin
-            TRY_WITH_FUNC(gpio_isr_handler_add(m_config.irq_pin, irq_handler, this), cleanup_resources());
+            TRY_WITH_FUNC(gpio_isr_handler_add(m_config.irq_pin, irq_handler, this), cleanup());
 
-            // Create the timer for conversion and event queue used to pass the coordinates of presses
-            m_conv_timer  = xTimerCreate("Conversion Timer", pdMS_TO_TICKS(DEBOUNCE_MS), pdFALSE, this, conv_timer);
+            // Create the event queue used to pass the coordinates of presses
             m_event_queue = xQueueCreate(m_config.queue_length, sizeof(coord_t));
-
-            if (!m_event_queue || !m_conv_timer) {
-                cleanup_resources();
+            if (!m_event_queue) {
+                cleanup();
                 return ESP_ERR_NO_MEM;
             }
 
@@ -151,8 +162,7 @@ namespace touch {
                 return ESP_ERR_INVALID_STATE;
             }
 
-            cleanup_resources();
-
+            cleanup();
             return ESP_OK;
         }
 
@@ -225,8 +235,11 @@ namespace touch {
 
         spi_device_handle_t m_device_handle{};
 
-        TimerHandle_t m_conv_timer{};
+        TaskHandle_t  m_conv_task_handle{};
         QueueHandle_t m_event_queue{};
+
+        std::atomic<bool>         m_shutdown_requested;
+        std::atomic<TaskHandle_t> m_deinit_task_handle;
 
         // Bit positions in the byte to be sent to the XPT2046 controller
         constexpr static uint8_t START_BIT_POS   = 7; // Enables the XPT2046
@@ -240,9 +253,9 @@ namespace touch {
 
         constexpr static auto* TAG = "XPT2046";
 
-        constexpr static uint8_t DEBOUNCE_MS            = 20;
-        constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 10;
-        constexpr static uint8_t TRIM_COUNT             = 2;
+        constexpr static uint8_t DEBOUNCE_MS            = 10;
+        constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 15;
+        constexpr static uint8_t TRIM_COUNT             = 5;
 
         constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE_DURING_CALIB = 100;
         constexpr static uint8_t TRIM_COUNT_DURING_CALIB             = 30;
@@ -254,12 +267,25 @@ namespace touch {
         };
 
         // Helpers
+        void cleanup() {
+            m_deinit_task_handle.store(xTaskGetCurrentTaskHandle(), std::memory_order_release);
+            m_shutdown_requested.store(true, std::memory_order_release);
+
+            // Wake the conversion task since it could be sleeping
+            xTaskNotifyGive(m_conv_task_handle);
+
+            // Block till the conversion task is done with cleanup
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            m_deinit_task_handle.store(nullptr, std::memory_order_relaxed);
+        }
+
         void cleanup_resources() {
             if (m_device_handle) {
                 spi_bus_remove_device(m_device_handle);
                 m_device_handle = nullptr;
             }
 
+            gpio_intr_disable(m_config.irq_pin);
             gpio_isr_handler_remove(m_config.irq_pin);
             gpio_reset_pin(m_config.irq_pin);
             gpio_reset_pin(m_config.cs_pin);
@@ -269,18 +295,14 @@ namespace touch {
                 gpio_uninstall_isr_service();
             }
 
-            if (m_conv_timer) {
-                xTimerStop(m_conv_timer, portMAX_DELAY);
-                xTimerDelete(m_conv_timer, portMAX_DELAY);
-                m_conv_timer = nullptr;
-            }
-
             if (m_event_queue) {
                 vQueueDelete(m_event_queue);
                 m_event_queue = nullptr;
             }
 
-            m_config         = {};
+            m_config           = {};
+            m_conv_task_handle = nullptr;
+
             m_is_initialized = false;
         }
 
@@ -293,8 +315,8 @@ namespace touch {
 
             // For conversion, the XPT2046 expects ops of 24 bit cycles
             // Only the control byte matters for the tx buffer
-            alignas(4) constexpr std::array<uint8_t, MAX_DATA_WRITE_BYTES> tx_buf = {control_byte, 0x00U, 0x00U};
-            alignas(4) std::array<uint8_t, MAX_DATA_WRITE_BYTES>           rx_buf{};
+            alignas(4) const std::array<uint8_t, MAX_DATA_WRITE_BYTES> tx_buf = {control_byte, 0x00U, 0x00U};
+            alignas(4) std::array<uint8_t, MAX_DATA_WRITE_BYTES>       rx_buf{};
 
             spi_transaction_t trans = {
                 .flags            = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL,
@@ -323,52 +345,71 @@ namespace touch {
             // Mask interrupts on the irq pin to prevent false positives during conversion
             gpio_intr_disable(driver.m_config.irq_pin);
 
-            // Enable the conversion timer
+            // Wake the conversion task
             auto higher_priority_task_woken{pdFALSE};
-            xTimerStartFromISR(driver.m_conv_timer, &higher_priority_task_woken);
+
+            if (driver.m_conv_task_handle != nullptr) {
+                vTaskNotifyGiveFromISR(driver.m_conv_task_handle, &higher_priority_task_woken);
+            }
 
             if (higher_priority_task_woken == pdTRUE) {
                 portYIELD_FROM_ISR();
             } else {
-                // Reenable the interrupt since the timer failed to be started and won't enable it
+                // Reenable the interrupt since the task failed to be woken and won't enable it
                 gpio_intr_enable(driver.m_config.irq_pin);
             }
         }
 
-        static void conv_timer(TimerHandle_t handle) {
-            auto& driver = *static_cast<xpt2046_t<init_gpio_isr_service, flags>*>(pvTimerGetTimerID(handle));
+        static void conv_task(void* arg) {
+            auto& driver = *static_cast<xpt2046_t<init_gpio_isr_service, flags>*>(arg);
 
-            ESP_LOGI(TAG, "Conversion timer running");
+            while (!driver.m_shutdown_requested.load(std::memory_order_relaxed)) {
+                // Sleep till a touch is detected
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> x_samples{};
-            std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> y_samples{};
-
-            for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE; i++) {
-                // Read ADC samples for X and Y channels
-                const auto x_sample = driver.template read_chan<channel_t::X_CHAN>();
-                const auto y_sample = driver.template read_chan<channel_t::Y_CHAN>();
-
-                if (!x_sample.has_value() || !y_sample.has_value()) {
-                    // Enable the interrupt since an error occurred while getting samples
-                    gpio_intr_enable(driver.m_config.irq_pin);
-                    return;
+                // Check to see if the reason we were woken was because shutdown was requested
+                if (driver.m_shutdown_requested.load(std::memory_order_acquire)) {
+                    break;
                 }
 
-                x_samples[i] = x_sample.value();
-                y_samples[i] = y_sample.value();
+                ESP_LOGI(TAG, "Conversion task running");
+
+                std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> x_samples{};
+                std::array<uint16_t, NUM_OF_TIMES_TO_SAMPLE> y_samples{};
+
+                for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE; i++) {
+                    // Read ADC samples for X and Y channels
+                    // The filter should remove these 0 values if there's an error
+                    x_samples[i] = driver.template read_chan<channel_t::X_CHAN>().value_or(4095);
+                    y_samples[i] = driver.template read_chan<channel_t::Y_CHAN>().value_or(4095);
+                }
+
+                const auto coord = compute_coord<NUM_OF_TIMES_TO_SAMPLE, TRIM_COUNT>(
+                    x_samples, y_samples, driver.m_config.screen_pixel_len_x, driver.m_config.screen_pixel_len_y);
+
+                ESP_LOGI(TAG, "Coordinates of press: (%u, %u)", coord.x, coord.y);
+
+                // Push coordinate of press to the event queue
+                auto ret = xQueueSend(driver.m_event_queue, &coord, 0);
+                if (ret != pdPASS) {
+                    ESP_LOGE(TAG, "Failed to push coordinates to event queue");
+                }
+
+                // Enable the interrupt only after we are done with conversion
+                gpio_intr_enable(driver.m_config.irq_pin);
             }
 
-            const auto coord = compute_coord<NUM_OF_TIMES_TO_SAMPLE, TRIM_COUNT>(
-                x_samples, y_samples, driver.m_config.screen_pixel_len_x, driver.m_config.screen_pixel_len_y);
+            // Free used resources
+            driver.cleanup_resources();
 
-            // Enable the interrupt only after we are done with conversion
-            gpio_intr_enable(driver.m_config.irq_pin);
-
-            // Push coordinate of press to the event queue
-            auto ret = xQueueSend(driver.m_event_queue, &coord, 0);
-            if (ret == pdPASS) {
-                portYIELD();
+            // Send a notification to the task that requested the deinitialization
+            // so it can safely return since all cleanup has been done properly
+            auto deinit_task_handle = driver.m_deinit_task_handle.load(std::memory_order_acquire);
+            if (deinit_task_handle != nullptr) {
+                xTaskNotifyGive(deinit_task_handle);
             }
+
+            vTaskDelete(nullptr);
         }
     };
 

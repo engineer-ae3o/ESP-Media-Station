@@ -65,8 +65,11 @@ namespace {
         assert(event_queue);
 
         while (true) {
-            xpt2046.run_calibration();
-            vTaskDelay(pdMS_TO_TICKS(5'000));
+            touch::coord_t touch_coord{};
+            // Block until the ISR triggers the conversion timer
+            if (xQueueReceive(event_queue, &touch_coord, portMAX_DELAY) == pdPASS) {
+                ESP_LOGI(TAG, "Touch registered at (%u, %u)", touch_coord.x, touch_coord.y);
+            }
         }
     }
 

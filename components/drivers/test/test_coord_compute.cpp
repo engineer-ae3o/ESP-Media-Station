@@ -23,6 +23,9 @@ namespace {
 
 } // namespace
 
+// NOTE: The y axis (in my physical configuration, at least) is swapped.
+// So the coordinates for the y axis will be flipped relative to the x axis
+
 TEST_CASE("All identical samples produce that exact value", "[touch_math]") {
 
     constexpr samples_t x_samples = make_filled_array(2000);
@@ -30,12 +33,12 @@ TEST_CASE("All identical samples produce that exact value", "[touch_math]") {
 
     constexpr auto coord = touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(x_samples, y_samples, SCREEN_W, SCREEN_H);
 
-    TEST_ASSERT_EQUAL_UINT16(115, coord.x);
-    TEST_ASSERT_EQUAL_UINT16(153, coord.y);
+    TEST_ASSERT_EQUAL_UINT16(114, coord.x);
+    TEST_ASSERT_EQUAL_UINT16(155, coord.y);
 
     // For good measure since its compile time
-    static_assert(coord.x == 115);
-    static_assert(coord.y == 153);
+    static_assert(coord.x == 114);
+    static_assert(coord.y == 155);
 }
 
 TEST_CASE("Outliers beyond the trim window are excluded from the average", "[touch_math]") {
@@ -89,10 +92,10 @@ TEST_CASE("Minimum calibration value maps to screen origin", "[touch_math]") {
     constexpr auto coord = touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(x_samples, y_samples, SCREEN_W, SCREEN_H);
 
     TEST_ASSERT_EQUAL_UINT16(0, coord.x);
-    TEST_ASSERT_EQUAL_UINT16(0, coord.y);
+    TEST_ASSERT_EQUAL_UINT16(SCREEN_H - 1, coord.y);
 
     static_assert(coord.x == 0);
-    static_assert(coord.y == 0);
+    static_assert(coord.y == SCREEN_H - 1);
 }
 
 TEST_CASE("Maximum calibration value maps to screen far edge", "[touch_math]") {
@@ -103,10 +106,10 @@ TEST_CASE("Maximum calibration value maps to screen far edge", "[touch_math]") {
     constexpr auto coord = touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(x_samples, y_samples, SCREEN_W, SCREEN_H);
 
     TEST_ASSERT_EQUAL_UINT16(SCREEN_W - 1, coord.x);
-    TEST_ASSERT_EQUAL_UINT16(SCREEN_H - 1, coord.y);
+    TEST_ASSERT_EQUAL_UINT16(0, coord.y);
 
     static_assert(coord.x == SCREEN_W - 1);
-    static_assert(coord.y == SCREEN_H - 1);
+    static_assert(coord.y == 0);
 }
 
 TEST_CASE("Values beyond calibration bounds get clamped, not extrapolated", "[touch_math]") {
@@ -118,10 +121,10 @@ TEST_CASE("Values beyond calibration bounds get clamped, not extrapolated", "[to
     constexpr auto below = touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(below_min_x_samples, below_min_y_samples, SCREEN_W, SCREEN_H);
 
     TEST_ASSERT_EQUAL_UINT16(0, below.x);
-    TEST_ASSERT_EQUAL_UINT16(0, below.y);
+    TEST_ASSERT_EQUAL_UINT16(SCREEN_H - 1, below.y);
 
     static_assert(below.x == 0);
-    static_assert(below.y == 0);
+    static_assert(below.y == SCREEN_H - 1);
 
     // Above x_max/y_max entirely (ADC ceiling is 4095, well above x_max = 3750)
     constexpr samples_t above_max_x_samples = make_filled_array(4095);
@@ -130,10 +133,10 @@ TEST_CASE("Values beyond calibration bounds get clamped, not extrapolated", "[to
     constexpr auto above = touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(above_max_x_samples, above_max_y_samples, SCREEN_W, SCREEN_H);
 
     TEST_ASSERT_EQUAL_UINT16(SCREEN_W - 1, above.x);
-    TEST_ASSERT_EQUAL_UINT16(SCREEN_H - 1, above.y);
+    TEST_ASSERT_EQUAL_UINT16(0, above.y);
 
     static_assert(above.x == SCREEN_W - 1);
-    static_assert(above.y == SCREEN_H - 1);
+    static_assert(above.y == 0);
 }
 
 TEST_CASE("X and Y are computed independently", "[touch_math]") {
@@ -144,8 +147,8 @@ TEST_CASE("X and Y are computed independently", "[touch_math]") {
     constexpr auto coord = touch::compute_coord<MAX_SAMPLE_LEN, TRIM_COUNT>(x_samples, y_samples, SCREEN_W, SCREEN_H);
 
     TEST_ASSERT_EQUAL_UINT16(0, coord.x);
-    TEST_ASSERT_EQUAL_UINT16(SCREEN_H - 1, coord.y);
+    TEST_ASSERT_EQUAL_UINT16(0, coord.y);
 
     static_assert(coord.x == 0);
-    static_assert(coord.y == SCREEN_H - 1);
+    static_assert(coord.y == 0);
 }
