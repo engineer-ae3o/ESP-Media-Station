@@ -52,11 +52,15 @@ namespace {
 
         // Initialize the XPT2046
         constexpr touch::config_t xpt_config = {
-            .spi_host      = config::XPT_SPI_BUS,
-            .clock_freq_hz = config::XPT_SPI_CLK_SPEED_HZ,
-            .queue_length  = 5,
-            .cs_pin        = config::XPT_CS_PIN,
-            .irq_pin       = config::XPT_IRQ_PIN,
+            .spi_host           = config::XPT_SPI_BUS,
+            .clock_freq_hz      = config::XPT_SPI_CLK_SPEED_HZ,
+            .queue_length       = 5,
+            .cs_pin             = config::XPT_CS_PIN,
+            .irq_pin            = config::XPT_IRQ_PIN,
+            .screen_pixel_len_x = display::ili9341_t::MAX_WIDTH,
+            .screen_pixel_len_y = display::ili9341_t::MAX_HEIGHT,
+            .task_priority      = 8,
+            .task_stack_size    = 3072,
         };
 
         touch::xpt2046_t xpt2046;
@@ -65,10 +69,10 @@ namespace {
         assert(event_queue);
 
         while (true) {
-            touch::coord_t touch_coord{};
+            touch::coord_t coord{};
             // Block until the ISR triggers the conversion timer
-            if (xQueueReceive(event_queue, &touch_coord, portMAX_DELAY) == pdPASS) {
-                ESP_LOGI(TAG, "Touch registered at (%u, %u)", touch_coord.x, touch_coord.y);
+            if (xQueueReceive(event_queue, &coord, portMAX_DELAY) == pdPASS) {
+                ESP_LOGI(TAG, "Touch registered at (%u, %u)", coord.x, coord.y);
             }
         }
     }

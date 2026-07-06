@@ -28,20 +28,20 @@ namespace touch {
         spi_host_device_t spi_host{};
 
         // Blame the awkward types on ESP-IDF's SPI driver
-        uint32_t clock_freq_hz{};
-        int      queue_length{};
+        uint32_t clock_freq_hz{2'000'000};
+        int      queue_length{5};
 
         // GPIO pins
         gpio_num_t cs_pin{GPIO_NUM_NC};
         gpio_num_t irq_pin{GPIO_NUM_NC};
 
         // Pixel length of the display
-        uint16_t screen_pixel_len_x{};
-        uint16_t screen_pixel_len_y{};
+        uint16_t screen_pixel_len_x{240};
+        uint16_t screen_pixel_len_y{320};
 
         // Conversion task details
         size_t task_priority{8};
-        size_t task_stack_size{2048};
+        size_t task_stack_size{4096};
     };
 
     template<bool init_gpio_isr_service = true, int flags = ESP_INTR_FLAG_LEVEL1>
@@ -348,7 +348,7 @@ namespace touch {
             // Wake the conversion task
             auto higher_priority_task_woken{pdFALSE};
 
-            if (driver.m_conv_task_handle != nullptr) {
+            if (driver.m_conv_task_handle) {
                 vTaskNotifyGiveFromISR(driver.m_conv_task_handle, &higher_priority_task_woken);
             }
 
@@ -380,14 +380,12 @@ namespace touch {
                 for (uint8_t i{}; i < NUM_OF_TIMES_TO_SAMPLE; i++) {
                     // Read ADC samples for X and Y channels
                     // The filter should remove these 0 values if there's an error
-                    x_samples[i] = driver.template read_chan<channel_t::X_CHAN>().value_or(4095);
-                    y_samples[i] = driver.template read_chan<channel_t::Y_CHAN>().value_or(4095);
+                    x_samples[i] = driver.template read_chan<channel_t::X_CHAN>().value_or(0);
+                    y_samples[i] = driver.template read_chan<channel_t::Y_CHAN>().value_or(0);
                 }
 
                 const auto coord = compute_coord<NUM_OF_TIMES_TO_SAMPLE, TRIM_COUNT>(
                     x_samples, y_samples, driver.m_config.screen_pixel_len_x, driver.m_config.screen_pixel_len_y);
-
-                ESP_LOGI(TAG, "Coordinates of press: (%u, %u)", coord.x, coord.y);
 
                 // Push coordinate of press to the event queue
                 auto ret = xQueueSend(driver.m_event_queue, &coord, 0);
@@ -405,7 +403,7 @@ namespace touch {
             // Send a notification to the task that requested the deinitialization
             // so it can safely return since all cleanup has been done properly
             auto deinit_task_handle = driver.m_deinit_task_handle.load(std::memory_order_acquire);
-            if (deinit_task_handle != nullptr) {
+            if (deinit_task_handle) {
                 xTaskNotifyGive(deinit_task_handle);
             }
 

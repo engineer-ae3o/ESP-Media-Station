@@ -29,11 +29,13 @@ namespace {
         return touch::config_t{
             .spi_host           = config::XPT_SPI_BUS,
             .clock_freq_hz      = config::XPT_SPI_CLK_SPEED_HZ,
-            .queue_length       = 10,
+            .queue_length       = 5,
             .cs_pin             = config::XPT_CS_PIN,
             .irq_pin            = config::XPT_IRQ_PIN,
             .screen_pixel_len_x = display::ili9341_t::MAX_WIDTH,
             .screen_pixel_len_y = display::ili9341_t::MAX_HEIGHT,
+            .task_priority      = 8,
+            .task_stack_size    = 3072,
         };
     }
 
