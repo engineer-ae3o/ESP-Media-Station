@@ -60,4 +60,10 @@ namespace config {
     constexpr inline gpio_num_t BUTTON_2      = GPIO_NUM_NC;
     constexpr inline gpio_num_t BUTTON_3      = GPIO_NUM_NC;
 
+    //
+    constexpr inline const char* FILESYSTEM_BASE_PATH       = "/lfs";
+    constexpr inline const char* FILESYSTEM_PARTITION_LABEL = "storage";
+
+    constexpr uint8_t MAX_ERR_COUNT = 6;
+
 } // namespace config

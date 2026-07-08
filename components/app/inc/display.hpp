@@ -1,6 +1,13 @@
 #pragma once
 
-#include "ili9341.hpp"
-#include "xpt2046.hpp"
+#include "esp_err.h"
 
-namespace display {} // namespace display
+namespace display {
+
+    [[nodiscard]] esp_err_t init();
+
+    [[nodiscard]] esp_err_t deinit();
+
+    [[nodiscard]] esp_err_t pause_rendering(bool pause = true);
+
+} // namespace display
