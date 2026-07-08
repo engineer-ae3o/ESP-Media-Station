@@ -14,11 +14,17 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
-#include "portmacro.h"
 #include "esp_system.h"
 
+#include "esp_opus_enc.h"
+#include "esp_audio_enc.h"
+#include "esp_audio_dec.h"
+
+#include <array>
 #include <atomic>
+#include <cstdio>
 #include <cstdint>
+#include <utility>
 
 namespace audio::pipeline {
 
@@ -35,6 +41,10 @@ namespace audio::pipeline {
         std::atomic<bool> g_shutdown_requested{};
 
         constexpr const char* TAG = "Audio";
+
+        constexpr std::array<const char*, std::to_underlying(file_t::COUNT)> FILE_LUT = {{
+            [std::to_underlying(file_t::RECORD_FILE)] = "/lfs/audio/record_audio.opus",
+        }};
 
         enum class record_t : uint8_t {
             START,
@@ -94,9 +104,75 @@ namespace audio::pipeline {
             portYIELD();
         }
 
-        void audio_task(void* arg) {
+        void record_task(void* arg) {
+
+            FILE*                  record_file = nullptr;
+            esp_audio_enc_handle_t encoder{};
+            esp_audio_dec_handle_t decoder{};
+
+            // Encoder settings
+            esp_opus_enc_config_t opus_config = {
+                .sample_rate      = mic::inmp441_t::SAMPLE_RATE_HZ,
+                .channel          = ESP_AUDIO_MONO,
+                .bits_per_sample  = ESP_AUDIO_BIT24,
+                .bitrate          = 300'000,
+                .frame_duration   = ESP_OPUS_ENC_FRAME_DURATION_5_MS,
+                .application_mode = ESP_OPUS_ENC_APPLICATION_VOIP,
+                .complexity       = 4,
+                .enable_fec       = true,
+                .enable_dtx       = true,
+                .enable_vbr       = false,
+            };
+
+            esp_audio_enc_config_t enc_config = {
+                .type   = ESP_AUDIO_TYPE_OPUS,
+                .cfg    = &opus_config,
+                .cfg_sz = sizeof(esp_opus_enc_config_t),
+            };
+
+            auto ret = esp_audio_enc_open(&enc_config, &encoder);
+            if (ret != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE(TAG, "Failed to initialize the opus audio encoder: %d", ret);
+            }
+
+            ret = esp_opus_enc_register();
+            if (ret != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE(TAG, "Failed to register the opus encoder: %d", ret);
+            }
+
+            // Decoder settings
 
             while (g_shutdown_requested.load(std::memory_order_acquire)) {
+                record_t event{};
+                xQueueReceive(g_record_btn_queue, &event, portMAX_DELAY);
+
+                if (event == record_t::START) {
+                    // Always zero out the file when opening
+                    record_file = fopen(FILE_LUT[std::to_underlying(file_t::RECORD_FILE)], "w");
+                    if (record_file == nullptr) {
+                        ESP_LOGE(TAG, "Failed to open file to store audio. Running out of flash, perhaps");
+                        continue;
+                    }
+
+                } else if (event == record_t::STOP) {
+                    if (record_file) {
+                        TRY_THEN_LOG(g_inmp441.enable(false), "Failed to disable the INMP441");
+                        fclose(record_file);
+                        record_file = nullptr;
+                    }
+                } else {
+                }
+            }
+
+            esp_audio_enc_reset(encoder);
+            esp_audio_enc_close(encoder);
+
+            vTaskDelete(nullptr);
+        }
+
+        void audio_task(void* arg) {
+
+            while (true) {
             }
 
             cleanup();
@@ -114,6 +190,12 @@ namespace audio::pipeline {
 
         auto ret = xTaskCreate(audio_task, "Audio Task", AUDIO_TASK_STACK_SIZE, nullptr, AUDIO_TASK_PRIORITY, &g_audio_task_handle);
         if (ret != pdPASS) {
+            return ESP_ERR_NO_MEM;
+        }
+
+        ret = xTaskCreate(record_task, "Record Task", RECORD_TASK_STACK_SIZE, nullptr, RECORD_TASK_PRIORITY, nullptr);
+        if (ret != pdPASS) {
+            g_shutdown_requested.store(true, std::memory_order_release);
             return ESP_ERR_NO_MEM;
         }
 

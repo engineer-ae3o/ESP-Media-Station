@@ -23,6 +23,13 @@
         }                                                                                                                                  \
     } while (0)
 
+#define TRY_THEN_LOG(func, msg)                                                                                                            \
+    do {                                                                                                                                   \
+        if (auto ret_ = (func); ret_ != ESP_OK) {                                                                                          \
+            ESP_LOGE(TAG, "%s: %s", msg, esp_err_to_name(ret_));                                                                           \
+        }                                                                                                                                  \
+    } while (0)
+
 namespace utils {
 
     struct spi_bus_config_t {

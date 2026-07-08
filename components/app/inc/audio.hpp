@@ -4,6 +4,11 @@
 
 namespace audio::pipeline {
 
+    enum class file_t : uint8_t {
+        RECORD_FILE,
+        COUNT,
+    };
+
     esp_err_t init();
 
     esp_err_t deinit();
