@@ -1,5 +1,7 @@
+#include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 #include "utils.hpp"
 #include "config.hpp"
@@ -31,10 +33,8 @@ namespace display {
 
         lv_display_t* g_display = nullptr;
 
-        TaskHandle_t     g_render_task_handle   = nullptr;
-        constexpr size_t RENDER_TASK_STACK_SIZE = 8192; // The call stack for lv_timer_handler(...) runs deep
-        constexpr size_t RENDER_PERIOD_MS       = 10;
-        constexpr size_t RENDER_TASK_PRIORITY   = 3; // Fairly low
+        TaskHandle_t  g_render_task_handle = nullptr;
+        QueueHandle_t g_touch_queue{};
 
         esp_timer_handle_t g_lvgl_tick_timer = nullptr;
 
@@ -71,6 +71,8 @@ namespace display {
                 heap_caps_free(g_frame_buffer_2);
                 g_frame_buffer_2 = nullptr;
             }
+
+            g_touch_queue = nullptr;
 
             (void)g_ili9341.deinit();
             (void)g_xpt2046.deinit();
@@ -123,6 +125,12 @@ namespace display {
             .task_stack_size    = 3072,
         };
         TRY_WITH_FUNC(g_xpt2046.init(xpt_config), cleanup());
+
+        g_touch_queue = g_xpt2046.get_event_queue();
+        if (g_touch_queue == nullptr) {
+            cleanup();
+            return ESP_ERR_INVALID_STATE;
+        }
 
         g_frame_buffer_1 = static_cast<uint8_t*>(
             heap_caps_malloc(BUFFER_SIZE_BYTES, (MALLOC_CAP_8BIT | MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM | MALLOC_CAP_CACHE_ALIGNED)));

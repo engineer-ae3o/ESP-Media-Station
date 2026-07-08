@@ -181,19 +181,19 @@ namespace audio::mic {
         return ESP_OK;
     }
 
-    std::expected<std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>, esp_err_t> inmp441_t::get_filled_buffer() {
+    std::expected<std::span<int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>, esp_err_t> inmp441_t::get_filled_buffer() {
         if (!m_is_initialized) {
             return std::unexpected(ESP_ERR_INVALID_STATE);
         }
 
         // Check if the first buffer is filled and is not being used by the stream task
         if (m_is_buf1_filled) {
-            return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>{m_buf1, inmp441_t::RECV_BUF_SIZE_ELEMENTS};
+            return std::span<int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>{m_buf1, inmp441_t::RECV_BUF_SIZE_ELEMENTS};
         }
 
         // Similarly, check if the second buffer is filled and is not also being used by the stream task
         if (m_is_buf2_filled) {
-            return std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>{m_buf2, inmp441_t::RECV_BUF_SIZE_ELEMENTS};
+            return std::span<int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>{m_buf2, inmp441_t::RECV_BUF_SIZE_ELEMENTS};
         }
 
         return std::unexpected(ESP_ERR_NOT_FOUND);
