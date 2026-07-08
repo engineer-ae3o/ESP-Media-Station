@@ -1,6 +1,5 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
 
 #include "utils.hpp"
 #include "config.hpp"
@@ -15,6 +14,8 @@
 
 #include "lvgl.h"
 
+#include <atomic>
+
 namespace display {
 
     namespace {
@@ -25,17 +26,19 @@ namespace display {
         uint8_t* g_frame_buffer_1{};
         uint8_t* g_frame_buffer_2{};
 
-        bool g_is_initialized{};
+        bool              g_is_initialized{};
+        std::atomic<bool> g_is_rendering{};
 
         lv_display_t* g_display = nullptr;
 
-        TaskHandle_t     g_render_task_handle        = nullptr;
-        constexpr size_t LVGL_RENDER_TASK_STACK_SIZE = 8192; // The call stack for lv_timer_handler(...) is large
+        TaskHandle_t     g_render_task_handle   = nullptr;
+        constexpr size_t RENDER_TASK_STACK_SIZE = 8192; // The call stack for lv_timer_handler(...) runs deep
+        constexpr size_t RENDER_PERIOD_MS       = 10;
+        constexpr size_t RENDER_TASK_PRIORITY   = 3; // Fairly low
 
         esp_timer_handle_t g_lvgl_tick_timer = nullptr;
 
         constexpr const char* TAG               = "DISPLAY";
-        constexpr size_t      RENDER_TIMER_MS   = 10;
         constexpr size_t      BUFFER_SIZE_BYTES = ili9341_t::MAX_HEIGHT * ili9341_t::MAX_WIDTH * sizeof(uint16_t);
 
         void cleanup() {
@@ -134,6 +137,11 @@ namespace display {
         lv_init();
 
         g_display = lv_display_create(ili9341_t::MAX_WIDTH, ili9341_t::MAX_HEIGHT);
+        if (g_display == nullptr) {
+            cleanup();
+            return ESP_ERR_NO_MEM;
+        }
+
         lv_display_set_buffers(g_display, g_frame_buffer_1, g_frame_buffer_2, BUFFER_SIZE_BYTES, LV_DISPLAY_RENDER_MODE_FULL);
         lv_display_set_color_format(g_display, LV_COLOR_FORMAT_RGB565);
         lv_display_set_flush_cb(g_display, [](lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
@@ -148,7 +156,10 @@ namespace display {
             auto ret =
                 esp_cache_msync(px_map, (pixel_count * sizeof(uint16_t)), ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_TYPE_DATA);
             if (ret != ESP_OK) {
-                ESP_LOGI(TAG, "Failed to perform cache writeback op: %s", esp_err_to_name(ret));
+                ESP_LOGE(TAG, "Failed to perform cache writeback op: %s", esp_err_to_name(ret));
+                // If a failure happened, no point in transferring a stale buffer
+                lv_display_flush_ready(g_display);
+                return;
             }
 
             ret = g_ili9341.flush({static_cast<uint16_t>(area->x1),
@@ -182,17 +193,20 @@ namespace display {
             [](void* arg) {
                 while (true) {
                     // No need for locks here. LVGL does so internally already
+                    // Just check and wait till the rendering flag is true
+                    g_is_rendering.wait(false, std::memory_order_acquire);
                     lv_timer_handler();
-                    vTaskDelay(pdMS_TO_TICKS(RENDER_TIMER_MS));
+                    vTaskDelay(pdMS_TO_TICKS(RENDER_PERIOD_MS));
                 }
             },
             "Render Task",
-            LVGL_RENDER_TASK_STACK_SIZE,
+            RENDER_TASK_STACK_SIZE,
             nullptr,
-            2,
+            RENDER_TASK_PRIORITY,
             &g_render_task_handle);
         if (ret != pdPASS) {
             cleanup();
+            return ESP_ERR_NO_MEM;
         }
 
         g_is_initialized = true;
@@ -211,12 +225,8 @@ namespace display {
     }
 
     esp_err_t pause_rendering(bool pause) {
-        if (pause) {
-            TRY(esp_timer_stop(g_render_timer));
-        } else {
-            TRY(esp_timer_start_periodic(g_render_timer, RENDER_TIMER_MS * 1'000));
-        }
-
+        g_is_rendering.store(!pause, std::memory_order_release);
+        g_is_rendering.notify_one();
         return ESP_OK;
     }
 
