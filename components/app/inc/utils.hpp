@@ -5,6 +5,9 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_system.h"
+
+#include <source_location>
 
 #define TRY(func)                                                                                                                          \
     do {                                                                                                                                   \
@@ -35,7 +38,7 @@ namespace utils {
     struct spi_bus_config_t {
         spi_host_device_t bus{};
 
-        uint32_t flags{SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS};
+        uint32_t flags{};
         int      max_trans_size{};
 
         gpio_num_t mosi_pin{GPIO_NUM_NC};
@@ -64,6 +67,12 @@ namespace utils {
         TRY(spi_bus_initialize(config.bus, &bus_config, SPI_DMA_CH_AUTO));
 
         return ESP_OK;
-    };
+    }
+
+    [[noreturn]] inline void fatal(std::source_location location = std::source_location::current()) {
+        ESP_LOGE("FATAL_ERR", "Unrecoverable error from %s (%s): %d", location.function_name(), location.file_name(), location.line());
+        ESP_LOGE("FATAL_ERR", "Rebooting system");
+        esp_restart();
+    }
 
 } // namespace utils

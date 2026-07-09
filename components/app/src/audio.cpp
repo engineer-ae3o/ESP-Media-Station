@@ -16,19 +16,28 @@
 #include "esp_log.h"
 #include "esp_system.h"
 
-#include "esp_opus_enc.h"
 #include "esp_audio_enc.h"
 #include "esp_audio_dec.h"
+#include "esp_audio_enc_default.h"
+#include "esp_audio_dec_default.h"
 
 #include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
 #include <utility>
+#include <source_location>
 
 namespace audio::pipeline {
 
     namespace {
+
+        void try_esp_audio_func(esp_audio_err_t func, std::source_location location = std::source_location::current()) {
+            if (func != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE("ERROR", "%s:(%s):Line %d failed: %d", __FILE__, __PRETTY_FUNCTION__, __LINE__, func);
+                utils::fatal(location);
+            }
+        }
 
         amp::max98357a_t g_max98357{};
         mic::inmp441_t   g_inmp441{};
@@ -50,6 +59,9 @@ namespace audio::pipeline {
             START,
             STOP,
         };
+
+        void on_first_boot() {
+        }
 
         void cleanup() {
             if (g_record_btn_queue) {
@@ -104,45 +116,69 @@ namespace audio::pipeline {
             portYIELD();
         }
 
-        void record_task(void* arg) {
+        void opus_codec_init(esp_audio_enc_handle_t& encoder, esp_audio_dec_handle_t& decoder) {
+            // Register built in encoders and decoders
+            try_esp_audio_func(esp_audio_enc_register_default());
+            try_esp_audio_func(esp_audio_dec_register_default());
 
-            FILE*                  record_file = nullptr;
-            esp_audio_enc_handle_t encoder{};
-            esp_audio_dec_handle_t decoder{};
+            constexpr uint32_t OPUS_BIT_RATE   = 40'000;
+            constexpr uint32_t OPUS_COMPLEXITY = 6;
 
-            // Encoder settings
-            esp_opus_enc_config_t opus_config = {
+            // Configure the opus encoder
+            esp_opus_enc_config_t opus_enc_config = {
                 .sample_rate      = mic::inmp441_t::SAMPLE_RATE_HZ,
                 .channel          = ESP_AUDIO_MONO,
-                .bits_per_sample  = ESP_AUDIO_BIT24,
-                .bitrate          = 300'000,
-                .frame_duration   = ESP_OPUS_ENC_FRAME_DURATION_5_MS,
+                .bits_per_sample  = ESP_AUDIO_BIT16,
+                .bitrate          = OPUS_BIT_RATE,
+                .frame_duration   = ESP_OPUS_ENC_FRAME_DURATION_20_MS,
                 .application_mode = ESP_OPUS_ENC_APPLICATION_VOIP,
-                .complexity       = 4,
+                .complexity       = OPUS_COMPLEXITY,
                 .enable_fec       = true,
-                .enable_dtx       = true,
+                .enable_dtx       = false,
                 .enable_vbr       = false,
             };
 
             esp_audio_enc_config_t enc_config = {
                 .type   = ESP_AUDIO_TYPE_OPUS,
-                .cfg    = &opus_config,
+                .cfg    = &opus_enc_config,
                 .cfg_sz = sizeof(esp_opus_enc_config_t),
             };
+            try_esp_audio_func(esp_audio_enc_open(&enc_config, &encoder));
 
-            auto ret = esp_opus_enc_register();
-            if (ret != ESP_AUDIO_ERR_OK) {
-                ESP_LOGE(TAG, "Failed to register the opus encoder: %d", ret);
-                esp_restart();
-            }
+            // Configure the opus decoder
+            esp_opus_dec_cfg_t opus_dec_config = {
+                .sample_rate    = mic::inmp441_t::SAMPLE_RATE_HZ,
+                .channel        = ESP_AUDIO_MONO,
+                .frame_duration = ESP_OPUS_DEC_FRAME_DURATION_20_MS,
+                .self_delimited = false,
+            };
 
-            ret = esp_audio_enc_open(&enc_config, &encoder);
-            if (ret != ESP_AUDIO_ERR_OK) {
-                ESP_LOGE(TAG, "Failed to initialize the opus audio encoder: %d", ret);
-                esp_restart();
-            }
+            esp_audio_dec_cfg_t dec_config = {
+                .type   = ESP_AUDIO_TYPE_OPUS,
+                .cfg    = &opus_dec_config,
+                .cfg_sz = sizeof(esp_opus_dec_cfg_t),
+            };
+            try_esp_audio_func(esp_audio_dec_open(&dec_config, &decoder));
+        }
 
-            // Decoder settings
+        void opus_codec_deinit(esp_audio_enc_handle_t& encoder, esp_audio_dec_handle_t& decoder) {
+            esp_audio_enc_close(encoder);
+            esp_audio_dec_close(decoder);
+
+            encoder = nullptr;
+            decoder = nullptr;
+
+            esp_audio_enc_unregister_default();
+            esp_audio_dec_unregister_default();
+        }
+
+        void record_task(void* arg) {
+
+            FILE* record_file = nullptr;
+
+            esp_audio_enc_handle_t encoder{};
+            esp_audio_dec_handle_t decoder{};
+            opus_codec_init(encoder, decoder);
 
             while (g_shutdown_requested.load(std::memory_order_acquire)) {
                 record_t event{};
@@ -166,9 +202,7 @@ namespace audio::pipeline {
                 }
             }
 
-            esp_audio_enc_reset(encoder);
-            esp_audio_enc_close(encoder);
-
+            opus_codec_deinit(encoder, decoder);
             vTaskDelete(nullptr);
         }
 
@@ -219,8 +253,8 @@ namespace audio::pipeline {
                     ESP_LOGE("ERROR", "Error %u occurred while writing to the INMP441's buffers: %s", err_counter, esp_err_to_name(err));
                     err_counter++;
                     if (err_counter >= MAX_ERR_COUNT) {
-                        ESP_LOGE("ERROR", "Too many errors occured while writing to INMP441's buffer. Restarting system");
-                        esp_restart();
+                        ESP_LOGE("ERROR", "Too many errors occured while writing to INMP441's buffer");
+                        utils::fatal();
                     }
                 },
             .chip_en_pin = INMP_CHIPEN_PIN,
