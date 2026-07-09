@@ -9,8 +9,8 @@ namespace audio::pipeline {
         COUNT,
     };
 
-    esp_err_t init();
+    [[nodiscard]] esp_err_t init();
 
-    esp_err_t deinit();
+    [[nodiscard]] esp_err_t deinit();
 
 } // namespace audio::pipeline

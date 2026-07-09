@@ -5,6 +5,7 @@
 #include "freertos/timers.h"
 
 #include "utils.hpp"
+#include "codec.hpp"
 #include "audio.hpp"
 #include "config.hpp"
 #include "inmp441.hpp"
@@ -21,6 +22,7 @@
 #include "esp_audio_enc_default.h"
 #include "esp_audio_dec_default.h"
 
+#include <span>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -31,13 +33,6 @@
 namespace audio::pipeline {
 
     namespace {
-
-        void try_esp_audio_func(esp_audio_err_t func, std::source_location location = std::source_location::current()) {
-            if (func != ESP_AUDIO_ERR_OK) {
-                ESP_LOGE("ERROR", "%s:(%s):Line %d failed: %d", __FILE__, __PRETTY_FUNCTION__, __LINE__, func);
-                utils::fatal(location);
-            }
-        }
 
         amp::max98357a_t g_max98357{};
         mic::inmp441_t   g_inmp441{};
@@ -61,6 +56,7 @@ namespace audio::pipeline {
         };
 
         void on_first_boot() {
+            // TODO: Create the audio directory
         }
 
         void cleanup() {
@@ -116,69 +112,10 @@ namespace audio::pipeline {
             portYIELD();
         }
 
-        void opus_codec_init(esp_audio_enc_handle_t& encoder, esp_audio_dec_handle_t& decoder) {
-            // Register built in encoders and decoders
-            try_esp_audio_func(esp_audio_enc_register_default());
-            try_esp_audio_func(esp_audio_dec_register_default());
-
-            constexpr uint32_t OPUS_BIT_RATE   = 40'000;
-            constexpr uint32_t OPUS_COMPLEXITY = 6;
-
-            // Configure the opus encoder
-            esp_opus_enc_config_t opus_enc_config = {
-                .sample_rate      = mic::inmp441_t::SAMPLE_RATE_HZ,
-                .channel          = ESP_AUDIO_MONO,
-                .bits_per_sample  = ESP_AUDIO_BIT16,
-                .bitrate          = OPUS_BIT_RATE,
-                .frame_duration   = ESP_OPUS_ENC_FRAME_DURATION_20_MS,
-                .application_mode = ESP_OPUS_ENC_APPLICATION_VOIP,
-                .complexity       = OPUS_COMPLEXITY,
-                .enable_fec       = true,
-                .enable_dtx       = false,
-                .enable_vbr       = false,
-            };
-
-            esp_audio_enc_config_t enc_config = {
-                .type   = ESP_AUDIO_TYPE_OPUS,
-                .cfg    = &opus_enc_config,
-                .cfg_sz = sizeof(esp_opus_enc_config_t),
-            };
-            try_esp_audio_func(esp_audio_enc_open(&enc_config, &encoder));
-
-            // Configure the opus decoder
-            esp_opus_dec_cfg_t opus_dec_config = {
-                .sample_rate    = mic::inmp441_t::SAMPLE_RATE_HZ,
-                .channel        = ESP_AUDIO_MONO,
-                .frame_duration = ESP_OPUS_DEC_FRAME_DURATION_20_MS,
-                .self_delimited = false,
-            };
-
-            esp_audio_dec_cfg_t dec_config = {
-                .type   = ESP_AUDIO_TYPE_OPUS,
-                .cfg    = &opus_dec_config,
-                .cfg_sz = sizeof(esp_opus_dec_cfg_t),
-            };
-            try_esp_audio_func(esp_audio_dec_open(&dec_config, &decoder));
-        }
-
-        void opus_codec_deinit(esp_audio_enc_handle_t& encoder, esp_audio_dec_handle_t& decoder) {
-            esp_audio_enc_close(encoder);
-            esp_audio_dec_close(decoder);
-
-            encoder = nullptr;
-            decoder = nullptr;
-
-            esp_audio_enc_unregister_default();
-            esp_audio_dec_unregister_default();
-        }
-
         void record_task(void* arg) {
 
             FILE* record_file = nullptr;
-
-            esp_audio_enc_handle_t encoder{};
-            esp_audio_dec_handle_t decoder{};
-            opus_codec_init(encoder, decoder);
+            codec_opus::init();
 
             while (g_shutdown_requested.load(std::memory_order_acquire)) {
                 record_t event{};
@@ -188,7 +125,7 @@ namespace audio::pipeline {
                     // Always zero out the file when opening
                     record_file = fopen(FILE_LUT[std::to_underlying(file_t::RECORD_FILE)], "w");
                     if (record_file == nullptr) {
-                        ESP_LOGE(TAG, "Failed to open file to store audio. Running out of flash, perhaps");
+                        ESP_LOGE("CODEC", "Failed to open file to store audio. Running out of flash, perhaps");
                         continue;
                     }
 
@@ -202,13 +139,14 @@ namespace audio::pipeline {
                 }
             }
 
-            opus_codec_deinit(encoder, decoder);
+            codec_opus::deinit();
             vTaskDelete(nullptr);
         }
 
         void audio_task(void* arg) {
 
             while (true) {
+                vTaskDelay(portMAX_DELAY);
             }
 
             cleanup();
@@ -217,7 +155,7 @@ namespace audio::pipeline {
 
     } // namespace
 
-    [[nodiscard]] esp_err_t init() {
+    esp_err_t init() {
         if (g_is_initialized) {
             return ESP_ERR_INVALID_STATE;
         }
@@ -291,7 +229,7 @@ namespace audio::pipeline {
         return ESP_OK;
     }
 
-    [[nodiscard]] esp_err_t deinit() {
+    esp_err_t deinit() {
         if (!g_is_initialized) {
             return ESP_ERR_INVALID_STATE;
         }

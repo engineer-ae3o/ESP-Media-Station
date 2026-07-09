@@ -1,0 +1,147 @@
+#include "utils.hpp"
+#include "codec.hpp"
+#include "inmp441.hpp"
+
+#include "esp_err.h"
+#include "esp_log.h"
+
+#include "esp_audio_enc.h"
+#include "esp_audio_dec.h"
+#include "esp_audio_enc_default.h"
+#include "esp_audio_dec_default.h"
+
+#include <span>
+#include <cstdint>
+#include <source_location>
+
+namespace audio::codec_opus {
+
+    namespace {
+
+        constexpr const char* TAG = "CODEC";
+
+        static_assert(FRAME_DURATION_MS == 20, "Frame duration must be 20ms");
+
+        void try_esp_audio_func(esp_audio_err_t func, std::source_location location = std::source_location::current()) {
+            if (func != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE(TAG, "%s:(%s):Line %d failed: %d", location.file_name(), location.function_name(), location.line(), func);
+                utils::fatal(location);
+            }
+        }
+
+        esp_audio_enc_handle_t g_encoder{};
+        esp_audio_dec_handle_t g_decoder{};
+
+    } // namespace
+
+    void init() {
+        // Register built in encoders and decoders
+        try_esp_audio_func(esp_audio_enc_register_default());
+        try_esp_audio_func(esp_audio_dec_register_default());
+
+        // Configure the opus encoder
+        esp_opus_enc_config_t opus_enc_config = {
+            .sample_rate      = mic::inmp441_t::SAMPLE_RATE_HZ,
+            .channel          = ESP_AUDIO_MONO,
+            .bits_per_sample  = ESP_AUDIO_BIT16,
+            .bitrate          = BIT_RATE,
+            .frame_duration   = ESP_OPUS_ENC_FRAME_DURATION_20_MS,
+            .application_mode = ESP_OPUS_ENC_APPLICATION_VOIP,
+            .complexity       = 3,
+            .enable_fec       = true,
+            .enable_dtx       = false,
+            .enable_vbr       = false,
+        };
+
+        esp_audio_enc_config_t enc_config = {
+            .type   = ESP_AUDIO_TYPE_OPUS,
+            .cfg    = &opus_enc_config,
+            .cfg_sz = sizeof(esp_opus_enc_config_t),
+        };
+        try_esp_audio_func(esp_audio_enc_open(&enc_config, &g_encoder));
+
+        // Configure the opus decoder
+        esp_opus_dec_cfg_t opus_dec_config = {
+            .sample_rate    = mic::inmp441_t::SAMPLE_RATE_HZ,
+            .channel        = ESP_AUDIO_MONO,
+            .frame_duration = ESP_OPUS_DEC_FRAME_DURATION_20_MS,
+            .self_delimited = true,
+        };
+
+        esp_audio_dec_cfg_t dec_config = {
+            .type   = ESP_AUDIO_TYPE_OPUS,
+            .cfg    = &opus_dec_config,
+            .cfg_sz = sizeof(esp_opus_dec_cfg_t),
+        };
+        try_esp_audio_func(esp_audio_dec_open(&dec_config, &g_decoder));
+
+        int in_frame_size{};
+        int out_frame_size{};
+
+        try_esp_audio_func(esp_audio_enc_get_frame_size(g_encoder, &in_frame_size, &out_frame_size));
+        assert(in_frame_size == FRAME_SIZE_BYTES);
+
+        ESP_LOGI(TAG, "Frame size: %d bytes. Recommended output buffer size: %d bytes", in_frame_size, out_frame_size);
+    }
+
+    void deinit() {
+        esp_audio_enc_close(g_encoder);
+        esp_audio_dec_close(g_decoder);
+
+        g_encoder = nullptr;
+        g_decoder = nullptr;
+
+        esp_audio_enc_unregister_default();
+        esp_audio_dec_unregister_default();
+    }
+
+    [[nodiscard]] esp_err_t encode(std::span<uint8_t> pcm_in, std::span<uint8_t> opus_out) {
+        if (pcm_in.empty() || pcm_in.data() == nullptr) {
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        if ((pcm_in.size_bytes() % FRAME_SIZE_BYTES) != 0) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+
+        // Chunk the encoding
+        size_t in_bytes_encoded  = 0;
+        size_t out_bytes_encoded = 0;
+
+        for (size_t i = 0; i < (pcm_in.size_bytes() / FRAME_SIZE_BYTES); i++) {
+            esp_audio_enc_in_frame_t in_frame = {
+                .buffer = pcm_in.data() + in_bytes_encoded, // Advance head of input buffer
+                .len    = FRAME_SIZE_BYTES,
+            };
+
+            esp_audio_enc_out_frame_t out_frame = {
+                .buffer        = opus_out.data() + out_bytes_encoded,       // Move head of buffer to write into
+                .len           = opus_out.size_bytes() - out_bytes_encoded, // Decrease length of buffer since its being consumed
+                .encoded_bytes = 0,
+                .pts           = 0,
+            };
+
+            auto ret = esp_audio_enc_process(g_encoder, &in_frame, &out_frame);
+            if (ret != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE(TAG, "Error while encoding. Iteration: %zu", i);
+                return ESP_ERR_NOT_FINISHED;
+            }
+
+            in_bytes_encoded += FRAME_SIZE_BYTES;
+            out_bytes_encoded += out_frame.encoded_bytes;
+        }
+
+        ESP_LOGI(TAG, "Compression done. Input length: %zu bytes. Compressed length: %zu", in_bytes_encoded, out_bytes_encoded);
+
+        return ESP_OK;
+    }
+
+    [[nodiscard]] esp_err_t decode(std::span<uint8_t> opus_in, std::span<uint8_t> pcm_out) {
+        if (opus_in.empty() || pcm_out.data() == nullptr) {
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        return ESP_OK;
+    }
+
+} // namespace audio::codec_opus
