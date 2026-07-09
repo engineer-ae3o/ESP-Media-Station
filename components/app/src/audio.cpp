@@ -130,14 +130,16 @@ namespace audio::pipeline {
                 .cfg_sz = sizeof(esp_opus_enc_config_t),
             };
 
-            auto ret = esp_audio_enc_open(&enc_config, &encoder);
-            if (ret != ESP_AUDIO_ERR_OK) {
-                ESP_LOGE(TAG, "Failed to initialize the opus audio encoder: %d", ret);
-            }
-
-            ret = esp_opus_enc_register();
+            auto ret = esp_opus_enc_register();
             if (ret != ESP_AUDIO_ERR_OK) {
                 ESP_LOGE(TAG, "Failed to register the opus encoder: %d", ret);
+                esp_restart();
+            }
+
+            ret = esp_audio_enc_open(&enc_config, &encoder);
+            if (ret != ESP_AUDIO_ERR_OK) {
+                ESP_LOGE(TAG, "Failed to initialize the opus audio encoder: %d", ret);
+                esp_restart();
             }
 
             // Decoder settings
