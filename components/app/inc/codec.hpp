@@ -10,11 +10,11 @@
 
 namespace audio::codec_opus {
 
-    constexpr uint32_t BIT_RATE          = 40'000;
-    constexpr uint32_t FRAME_DURATION_MS = 20;
+    constexpr inline uint32_t BIT_RATE          = 40'000;
+    constexpr inline uint32_t FRAME_DURATION_MS = 20;
 
-    constexpr uint32_t SAMPLES_PER_FRAME = (mic::inmp441_t::SAMPLE_RATE_HZ * FRAME_DURATION_MS) / 1'000;
-    constexpr uint32_t FRAME_SIZE_BYTES  = SAMPLES_PER_FRAME * (ESP_AUDIO_BIT16 / 8) * 1; // 1 channel
+    constexpr inline uint32_t SAMPLES_PER_FRAME = (mic::inmp441_t::SAMPLE_RATE_HZ * FRAME_DURATION_MS) / 1'000;
+    constexpr inline uint32_t FRAME_SIZE_BYTES  = SAMPLES_PER_FRAME * (ESP_AUDIO_BIT16 / 8) * 1; // 1 channel
 
     void init();
 
