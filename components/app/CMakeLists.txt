@@ -1,6 +1,5 @@
 idf_component_register(SRCS "src/audio.cpp"
                             "src/tasks.cpp"
-                            "src/codec.cpp"
                             "src/display.cpp"
                        INCLUDE_DIRS "inc/"
                        REQUIRES drivers freertos unity esp_timer
