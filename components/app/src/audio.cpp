@@ -55,10 +55,6 @@ namespace audio::pipeline {
             STOP,
         };
 
-        void on_first_boot() {
-            // TODO: Create the audio directory
-        }
-
         void cleanup() {
             if (g_record_btn_queue) {
                 vQueueDelete(g_record_btn_queue);
@@ -115,7 +111,7 @@ namespace audio::pipeline {
         void record_task(void* arg) {
 
             FILE* record_file = nullptr;
-            codec_opus::init();
+            codec::opus::init();
 
             while (g_shutdown_requested.load(std::memory_order_acquire)) {
                 record_t event{};
@@ -139,7 +135,7 @@ namespace audio::pipeline {
                 }
             }
 
-            codec_opus::deinit();
+            codec::opus::deinit();
             vTaskDelete(nullptr);
         }
 
@@ -238,6 +234,10 @@ namespace audio::pipeline {
         g_shutdown_requested.store(true, std::memory_order_release);
 
         return ESP_OK;
+    }
+
+    void on_first_boot() {
+        // TODO: Create the audio directory
     }
 
 } // namespace audio::pipeline

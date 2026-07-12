@@ -13,4 +13,6 @@ namespace audio::pipeline {
 
     [[nodiscard]] esp_err_t deinit();
 
+    void on_first_boot();
+
 } // namespace audio::pipeline

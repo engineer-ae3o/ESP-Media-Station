@@ -26,6 +26,14 @@
         }                                                                                                                                  \
     } while (0)
 
+#define TRY_WITH_FUNC_VOID(func, err_cb)                                                                                                   \
+    do {                                                                                                                                   \
+        if (auto ret_ = (func); ret_ != ESP_OK) {                                                                                          \
+            ESP_LOGE("ERROR", "%s:(%s):Line %d failed: %s", __FILE__, __PRETTY_FUNCTION__, __LINE__, esp_err_to_name(ret_));               \
+            (err_cb);                                                                                                                      \
+        }                                                                                                                                  \
+    } while (0)
+
 #define TRY_THEN_LOG(func, msg)                                                                                                            \
     do {                                                                                                                                   \
         if (auto ret_ = (func); ret_ != ESP_OK) {                                                                                          \

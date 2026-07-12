@@ -1,4 +1,3 @@
-#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -9,6 +8,7 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_littlefs.h"
 
 namespace tasks {
@@ -33,7 +33,7 @@ namespace tasks {
             return ESP_OK;
         }
 
-        [[nodiscard]] esp_err_t filesystem_deinit() {
+        [[nodiscard, maybe_unused]] esp_err_t filesystem_deinit() {
             TRY(esp_vfs_littlefs_unregister(config::FILESYSTEM_PARTITION_LABEL));
             return ESP_OK;
         }
@@ -41,22 +41,21 @@ namespace tasks {
         // These are all critical to the runtime of the system.
         // If any fail to be initialized, restart the system as we can't proceed
         void init_all() {
-            auto ret = filesystem_init();
-            if (ret != ESP_OK) {
+            if (auto ret = filesystem_init(); ret != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to mount filesystem");
-                esp_restart();
+                utils::fatal();
             }
 
-            ret = audio::pipeline::init();
-            if (ret != ESP_OK) {
+            if (auto ret = audio::pipeline::init(); ret != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to startup the audio pipeline");
-                esp_restart();
+                utils::fatal();
             }
         }
 
     } // namespace
 
     void run() {
+        init_all();
     }
 
 } // namespace tasks
