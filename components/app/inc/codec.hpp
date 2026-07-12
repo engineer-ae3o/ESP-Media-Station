@@ -130,11 +130,12 @@ namespace audio::codec::opus {
          *                 size of the buffer should be aligned to the size of an input frame.
          * @param opus_out The buffer into which the encoded opus stream is written into.
          *
-         * @return The amount of the opus_out span in bytes that was consumed by the driver.
+         * @return The amount of the opus_out span in bytes that was consumed by the driver, and
+         *         a bool representing whether or not the encoding was complete or was a partial success.
          *
          * @note This is to be used only in encoder mode.
          */
-        [[nodiscard]] std::expected<uint32_t, esp_err_t> encode(std::span<uint8_t> pcm_in, std::span<uint8_t> opus_out) {
+        [[nodiscard]] std::expected<std::pair<uint32_t, bool>, esp_err_t> encode(std::span<uint8_t> pcm_in, std::span<uint8_t> opus_out) {
             if constexpr (stream_mode != stream_mode_t::ENCODER) {
                 return std::unexpected(ESP_ERR_NOT_SUPPORTED);
 
@@ -158,6 +159,10 @@ namespace audio::codec::opus {
                     // of frames written so it can be placed at the start of the stream before being stored or used.
                     // For now, just reserve space at the head of the output opus stream for the header.
 
+                    if (out_buf_left < sizeof(stream_header_t)) {
+                        return std::unexpected(ESP_ERR_INVALID_SIZE);
+                    }
+
                     out_buf += sizeof(stream_header_t);
                     out_buf_left -= sizeof(stream_header_t);
 
@@ -169,7 +174,6 @@ namespace audio::codec::opus {
 
                 // Get the number of frames we're to encode this iteration
                 const uint32_t NUM_OF_FRAMES = pcm_in.size_bytes() / m_pcm_frame_size;
-                m_num_of_frames += NUM_OF_FRAMES;
 
                 // Approximate the opus output buffer size needed to store the encoded PCM frames. Just a rough estimate.
                 const uint32_t total_buf_size_needed =
@@ -204,7 +208,15 @@ namespace audio::codec::opus {
                     auto ret = esp_audio_enc_process(m_encoder, &in_frame, &out_frame);
                     if (ret != ESP_AUDIO_ERR_OK) {
                         ESP_LOGE(TAG, "Error while encoding: %d. Iteration: %u", ret, i);
-                        return std::unexpected(ESP_ERR_NOT_FINISHED);
+                        // If this is the first iteration, return an error since nothing has been encoded yet
+                        if (i == 0) {
+                            return std::unexpected(ESP_ERR_NOT_FINISHED);
+                        }
+                        // But if we've already encoded some frames, no point in returning a complete failure
+                        else {
+                            // Instead, return the size of the valid samples we've encoded so far, and let the caller know that this was a partial success
+                            return std::pair{(opus_out.size_bytes() - out_buf_left - sizeof(frame_header_t)), false};
+                        }
                     }
 
                     // Header for each frame
@@ -223,14 +235,15 @@ namespace audio::codec::opus {
                     out_buf += out_frame.encoded_bytes;
                     out_buf_left -= out_frame.encoded_bytes;
 
-                    m_largest_frame_size = std::max(out_frame.encoded_bytes, m_largest_frame_size);
+                    m_num_of_frames++;
                     m_total_stream_size += sizeof(frame_header_t) + out_frame.encoded_bytes;
+                    m_largest_frame_size = std::max(out_frame.encoded_bytes, m_largest_frame_size);
                 }
 
                 ESP_LOGI(TAG, "Compression done. Input length: %u bytes. Compressed length: %u", in_bytes_encoded, out_bytes_encoded);
 
                 // Return the size of the opus stream buffer that was consumed.
-                return opus_out.size_bytes() - out_buf_left;
+                return std::pair{(opus_out.size_bytes() - out_buf_left), true};
             }
         }
 

@@ -47,7 +47,7 @@ namespace audio::pipeline {
         constexpr const char* TAG = "Audio";
 
         constexpr std::array<const char*, std::to_underlying(file_t::COUNT)> FILE_LUT = {{
-            [std::to_underlying(file_t::RECORD_FILE)] = "/lfs/audio/record_audio.opus",
+            [std::to_underlying(file_t::RECORD_FILE)] = "/lfs/audio/recording.opus",
         }};
 
         enum class record_t : uint8_t {
@@ -111,7 +111,7 @@ namespace audio::pipeline {
         void record_task(void* arg) {
 
             FILE* record_file = nullptr;
-            codec::opus::init();
+            codec::opus::stream_t<codec::opus::stream_mode_t::ANALYZE>::init();
 
             while (g_shutdown_requested.load(std::memory_order_acquire)) {
                 record_t event{};
@@ -135,7 +135,7 @@ namespace audio::pipeline {
                 }
             }
 
-            codec::opus::deinit();
+            codec::opus::stream_t<codec::opus::stream_mode_t::ANALYZE>::deinit();
             vTaskDelete(nullptr);
         }
 
