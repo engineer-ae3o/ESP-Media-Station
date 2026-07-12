@@ -49,6 +49,7 @@ jobs:
       - name: Build tests
         run: |
           . $IDF_PATH/export.sh
+          idf.py reconfigure
           cd unity-app
           idf.py build size
 
@@ -66,8 +67,7 @@ jobs:
           . $IDF_PATH/export.sh
           apt-get update
           apt-get install -y cppcheck
-          cppcheck --version
-          idf.py reconfigure
+          idf.py build
           cmake --build build --target cppcheck
 
       - name: Upload cppcheck report
