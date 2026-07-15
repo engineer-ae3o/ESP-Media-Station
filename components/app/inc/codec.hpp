@@ -12,12 +12,14 @@
 #include "esp_audio_dec_default.h"
 
 #include <span>
+#include <memory>
 #include <cstdint>
 #include <cassert>
 #include <utility>
 #include <cstring>
 #include <concepts>
 #include <expected>
+#include <algorithm>
 
 namespace audio::codec::opus {
 
@@ -51,6 +53,145 @@ namespace audio::codec::opus {
 
         esp_opus_enc_application_t mode{};
     };
+
+    // These define the implementation of the input opus stream sources. This
+    // is because the data could either be from a file or it could be in a flat
+    // contiguous buffer, and iterating over the entire range of data in these
+    // sources have different implementations. So we implement the iteration here
+    // and use concepts to ensure they meet the constraints and API required by
+    // the interfaces that use them (DECODE and ANALYZE both use it since they have
+    // to iterate over an opus stream and get the frames).
+    struct frame_view_t {
+        frame_header_t           header{};
+        std::span<const uint8_t> data;
+    };
+
+    template<typename T>
+    concept stream_source_t = requires(T& source) {
+        typename T::data_t;
+        { source.create(std::declval<typename T::data_t>()) } -> std::same_as<std::expected<T, esp_err_t>>;
+        { source.next() } -> std::same_as<std::expected<frame_view_t, esp_err_t>>;
+    };
+
+    // Takes in a span to a contiguous, flat and byte addressable buffer and hands out frames from it.
+    class contiguous_frames_t {
+    public:
+        using data_t = std::span<uint8_t>;
+
+        contiguous_frames_t()  = delete;
+        ~contiguous_frames_t() = default;
+
+        contiguous_frames_t(const contiguous_frames_t&)            = delete;
+        contiguous_frames_t& operator=(const contiguous_frames_t&) = delete;
+
+        contiguous_frames_t(contiguous_frames_t&&)            = default;
+        contiguous_frames_t& operator=(contiguous_frames_t&&) = default;
+
+        [[nodiscard]] static std::expected<contiguous_frames_t, esp_err_t> create(data_t buf) {
+            // Read the stream header
+            if (buf.size_bytes() < sizeof(stream_header_t)) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            stream_header_t stream_header{};
+            memcpy(&stream_header, buf.data(), sizeof(stream_header_t));
+
+            if (buf.size_bytes() < stream_header.total_stream_size_bytes) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            // Get the pointer to the head of the first frame
+            return contiguous_frames_t{(buf.data() + sizeof(stream_header_t)), stream_header.number_of_frames};
+        }
+
+        [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
+        }
+
+    private:
+        uint8_t* m_head{};
+        uint32_t m_frames_remaining{};
+
+        contiguous_frames_t(uint8_t* first_frame, uint32_t num_frames) : m_head(first_frame), m_frames_remaining(num_frames) {
+        }
+    };
+
+    // Takes in an open file pointer to a file containing an opus stream.
+    // It only closes the file when it's done and if it got created successfully.
+    class file_frames_t {
+    public:
+        using data_t = FILE*;
+
+        file_frames_t() = delete;
+
+        ~file_frames_t() noexcept {
+            if (m_file) {
+                fclose(m_file);
+                m_file = nullptr;
+            }
+        }
+
+        file_frames_t(const file_frames_t&)            = delete;
+        file_frames_t& operator=(const file_frames_t&) = delete;
+
+        file_frames_t(file_frames_t&& other) noexcept {
+            m_file              = std::exchange(other.m_file, nullptr);
+            m_frames_remaining  = std::exchange(other.m_frames_remaining, 0);
+            m_temp_buf_capacity = std::exchange(other.m_temp_buf_capacity, 0);
+            m_temp_buf          = std::move(other.m_temp_buf);
+        }
+
+        file_frames_t& operator=(file_frames_t&& other) noexcept {
+            if (this != &other) {
+                if (m_file) {
+                    fclose(m_file);
+                }
+                m_file              = std::exchange(other.m_file, nullptr);
+                m_frames_remaining  = std::exchange(other.m_frames_remaining, 0);
+                m_temp_buf_capacity = std::exchange(other.m_temp_buf_capacity, 0);
+                m_temp_buf          = std::move(other.m_temp_buf);
+            }
+            return *this;
+        }
+
+        [[nodiscard]] static std::expected<file_frames_t, esp_err_t> create(data_t file) {
+            // Read the stream header
+            stream_header_t stream_header{};
+
+            if (fread(&stream_header, 1, sizeof(stream_header), file) != sizeof(stream_header_t)) {
+                fseek(file, 0, SEEK_SET);
+                return std::unexpected(ESP_ERR_INVALID_RESPONSE);
+            }
+
+            bool          success{};
+            file_frames_t instance{file, stream_header, success};
+            if (!success) {
+                instance.m_file = nullptr; // Prevent the instance from closing the file
+                return std::unexpected(ESP_ERR_NO_MEM);
+            }
+
+            return instance;
+        }
+
+        [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
+        }
+
+    private:
+        data_t   m_file{};
+        uint32_t m_frames_remaining{};
+        uint32_t m_temp_buf_capacity{};
+
+        std::unique_ptr<uint8_t[]> m_temp_buf;
+
+        file_frames_t(FILE* file, stream_header_t stream_header, bool& success)
+            : m_file(file), m_frames_remaining(stream_header.number_of_frames),
+              m_temp_buf_capacity(stream_header.largest_frame_size_bytes) {
+            m_temp_buf.reset(new (std::nothrow) uint8_t[m_temp_buf_capacity]);
+            success = (m_temp_buf != nullptr);
+        }
+    };
+
+    static_assert(stream_source_t<contiguous_frames_t>);
+    static_assert(stream_source_t<file_frames_t>);
 
     template<stream_mode_t stream_mode>
     class stream_t {
@@ -270,14 +411,14 @@ namespace audio::codec::opus {
         /**
          * @brief Receives an opus buffer and transforms to 16 bit PCM. 
          * 
-         * @param pcm_in   The buffer containing the opus frames.
-         * @param opus_out The buffer into which the decoded PCM stream is written into.
+         * @param opus_in The source containing the opus frames.
+         * @param pcm_out The buffer into which the decoded PCM stream is written into.
          *
          * @return ESP_OK on success, error code otherwise.
          *
          * @note This is to be used only in decoder mode.
          */
-        [[nodiscard]] esp_err_t decode(std::span<uint8_t> opus_in, std::span<uint8_t> pcm_out) {
+        [[nodiscard]] esp_err_t decode(stream_source_t auto& opus_in, std::span<uint8_t> pcm_out) {
             if constexpr (stream_mode != stream_mode_t::DECODER) {
                 return ESP_ERR_NOT_SUPPORTED;
             } else {
@@ -341,34 +482,6 @@ namespace audio::codec::opus {
                 memcpy(&frame_header, opus_frame.data(), sizeof(frame_header_t));
 
                 return frame_header;
-            }
-        }
-
-        /**
-         * @brief Iterates through an opus stream and returns the opus frames
-         *        (header included) till it gets to the end of the opus stream.
-         * 
-         * @param opus_stream The stream to iterate over
-         * 
-         * @return A span to the nth frame.
-         *
-         * @note This is to be used only in analyze mode.
-         */
-        [[nodiscard]] static std::expected<std::span<const uint8_t>, esp_err_t> iterate_opus_stream(std::span<const uint8_t> opus_stream) {
-            if constexpr (stream_mode != stream_mode_t::ANALYZE) {
-                return std::unexpected(ESP_ERR_NOT_SUPPORTED);
-
-            } else {
-                const auto stream_header = get_stream_header(opus_stream).value_or({});
-                if (stream_header.number_of_frames == 0) {
-                    return std::unexpected(ESP_ERR_INVALID_SIZE);
-                }
-
-                // Track our current position in the buffer and skip stream header so we point to the header of the first frame
-                const uint8_t* out_buf = opus_stream.data() + sizeof(stream_header_t);
-                uint32_t       frame_length{};
-
-                return std::span{out_buf, frame_length};
             }
         }
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "driver/spi_master.h"
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -79,14 +79,13 @@ namespace utils {
 
     [[noreturn]] inline void fatal(std::source_location location = std::source_location::current()) {
         ESP_LOGE("FATAL", "Unrecoverable error from %s (%s): %u", location.function_name(), location.file_name(), location.line());
-
-        // Crash and halt in debug builds, but reboot in release builds
-#ifdef CONFIG_COMPILER_OPTIMIZATION_LEVEL_DEBUG
         esp_system_abort("Fatal error. Cannot recover");
-#else
-        ESP_LOGE("FATAL", "Rebooting system");
+    }
+
+    [[noreturn]] inline void reboot(std::source_location location = std::source_location::current()) {
+        ESP_LOGE("FATAL", "Unrecoverable error from %s (%s): %u", location.function_name(), location.file_name(), location.line());
+        ESP_LOGE("FATAL", "Rebooting system.");
         esp_restart();
-#endif
     }
 
 } // namespace utils
