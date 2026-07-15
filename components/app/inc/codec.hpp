@@ -13,8 +13,8 @@
 
 #include <span>
 #include <memory>
-#include <cstdint>
 #include <cassert>
+#include <cstdint>
 #include <utility>
 #include <cstring>
 #include <concepts>
@@ -105,6 +105,9 @@ namespace audio::codec::opus {
         }
 
         [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
+            (void)m_head;
+            (void)m_frames_remaining;
+            return {};
         }
 
     private:
@@ -173,6 +176,11 @@ namespace audio::codec::opus {
         }
 
         [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
+            (void)m_file;
+            (void)m_frames_remaining;
+            (void)m_temp_buf_capacity;
+            (void)m_temp_buf;
+            return {};
         }
 
     private:
@@ -330,6 +338,17 @@ namespace audio::codec::opus {
 
                 for (uint32_t i = 0; i < NUM_OF_FRAMES; i++) {
                     // Reserve memory for the frame header
+                    if (out_buf_left < sizeof(frame_header_t)) {
+                        if (i == 0) {
+                            return std::unexpected(ESP_ERR_NO_MEM);
+                        }
+                        // But if we've already encoded some frames, no point in returning a complete failure
+                        else {
+                            // Instead, return the size of the valid samples we've encoded so far, and let the caller know that this was a partial success
+                            return std::pair{(opus_out.size_bytes() - out_buf_left - sizeof(frame_header_t)), false};
+                        }
+                    }
+
                     out_buf += sizeof(frame_header_t);
                     out_buf_left -= sizeof(frame_header_t);
 
@@ -563,7 +582,7 @@ namespace audio::codec::opus {
             } else if constexpr (stream_mode == stream_mode_t::DECODER) {
                 // Configure the opus decoder
                 esp_opus_dec_cfg_t opus_dec_config = {
-                    .sample_rate    = mic::inmp441_t::SAMPLE_RATE_HZ,
+                    .sample_rate    = static_cast<uint32_t>(config.sample_rate),
                     .channel        = ESP_AUDIO_MONO,
                     .frame_duration = ESP_OPUS_DEC_FRAME_DURATION_20_MS,
                     .self_delimited = false,

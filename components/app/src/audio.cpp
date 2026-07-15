@@ -17,18 +17,11 @@
 #include "esp_log.h"
 #include "esp_system.h"
 
-#include "esp_audio_enc.h"
-#include "esp_audio_dec.h"
-#include "esp_audio_enc_default.h"
-#include "esp_audio_dec_default.h"
-
-#include <span>
 #include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
 #include <utility>
-#include <source_location>
 
 namespace audio::pipeline {
 

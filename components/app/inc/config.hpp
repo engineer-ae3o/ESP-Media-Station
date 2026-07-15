@@ -55,18 +55,20 @@ namespace config {
     constexpr inline gpio_num_t INMP_CHIPEN_PIN = GPIO_NUM_4;
 
     // Pin definitions for the buttons
-    constexpr inline gpio_num_t RECORD_BUTTON = GPIO_NUM_4;
-    constexpr inline gpio_num_t RESET_BUTTON  = GPIO_NUM_5;
+    constexpr inline gpio_num_t RECORD_BUTTON = GPIO_NUM_45;
+    constexpr inline gpio_num_t RESET_BUTTON  = GPIO_NUM_47;
     constexpr inline gpio_num_t BUTTON_2      = GPIO_NUM_NC;
     constexpr inline gpio_num_t BUTTON_3      = GPIO_NUM_NC;
 
-    //
+    // Config settings for the LittleFS partition
     constexpr inline const char* FILESYSTEM_BASE_PATH       = "/lfs";
     constexpr inline const char* FILESYSTEM_PARTITION_LABEL = "storage";
     constexpr inline uint8_t     MAX_AUDIO_FILES_STORED     = 10;
 
     // Keep track of consecutive error in different subsystems
-    constexpr uint8_t MAX_ERR_COUNT    = 6;
+    constexpr uint8_t MAX_ERR_COUNT = 6;
+
+    // Miscellaneous
     constexpr uint8_t DEBOUNCE_TIME_MS = 50;
     constexpr uint8_t QUEUE_LEN        = 10;
 
