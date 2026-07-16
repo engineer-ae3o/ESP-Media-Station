@@ -73,135 +73,7 @@ namespace audio::codec::opus {
         { source.next() } -> std::same_as<std::expected<frame_view_t, esp_err_t>>;
     };
 
-    // Takes in a span to a contiguous, flat and byte addressable buffer and hands out frames from it.
-    class contiguous_frames_t {
-    public:
-        using data_t = std::span<uint8_t>;
-
-        contiguous_frames_t()  = delete;
-        ~contiguous_frames_t() = default;
-
-        contiguous_frames_t(const contiguous_frames_t&)            = delete;
-        contiguous_frames_t& operator=(const contiguous_frames_t&) = delete;
-
-        contiguous_frames_t(contiguous_frames_t&&)            = default;
-        contiguous_frames_t& operator=(contiguous_frames_t&&) = default;
-
-        [[nodiscard]] static std::expected<contiguous_frames_t, esp_err_t> create(data_t buf) {
-            // Read the stream header
-            if (buf.size_bytes() < sizeof(stream_header_t)) {
-                return std::unexpected(ESP_ERR_INVALID_SIZE);
-            }
-
-            stream_header_t stream_header{};
-            memcpy(&stream_header, buf.data(), sizeof(stream_header_t));
-
-            if (buf.size_bytes() < stream_header.total_stream_size_bytes) {
-                return std::unexpected(ESP_ERR_INVALID_SIZE);
-            }
-
-            // Get the pointer to the head of the first frame
-            return contiguous_frames_t{(buf.data() + sizeof(stream_header_t)), stream_header.number_of_frames};
-        }
-
-        [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
-            (void)m_head;
-            (void)m_frames_remaining;
-            return {};
-        }
-
-    private:
-        uint8_t* m_head{};
-        uint32_t m_frames_remaining{};
-
-        contiguous_frames_t(uint8_t* first_frame, uint32_t num_frames) : m_head(first_frame), m_frames_remaining(num_frames) {
-        }
-    };
-
-    // Takes in an open file pointer to a file containing an opus stream.
-    // It only closes the file when it's done and if it got created successfully.
-    class file_frames_t {
-    public:
-        using data_t = FILE*;
-
-        file_frames_t() = delete;
-
-        ~file_frames_t() noexcept {
-            if (m_file) {
-                fclose(m_file);
-                m_file = nullptr;
-            }
-        }
-
-        file_frames_t(const file_frames_t&)            = delete;
-        file_frames_t& operator=(const file_frames_t&) = delete;
-
-        file_frames_t(file_frames_t&& other) noexcept {
-            m_file              = std::exchange(other.m_file, nullptr);
-            m_frames_remaining  = std::exchange(other.m_frames_remaining, 0);
-            m_temp_buf_capacity = std::exchange(other.m_temp_buf_capacity, 0);
-            m_temp_buf          = std::move(other.m_temp_buf);
-        }
-
-        file_frames_t& operator=(file_frames_t&& other) noexcept {
-            if (this != &other) {
-                if (m_file) {
-                    fclose(m_file);
-                }
-                m_file              = std::exchange(other.m_file, nullptr);
-                m_frames_remaining  = std::exchange(other.m_frames_remaining, 0);
-                m_temp_buf_capacity = std::exchange(other.m_temp_buf_capacity, 0);
-                m_temp_buf          = std::move(other.m_temp_buf);
-            }
-            return *this;
-        }
-
-        [[nodiscard]] static std::expected<file_frames_t, esp_err_t> create(data_t file) {
-            // Read the stream header
-            stream_header_t stream_header{};
-
-            if (fread(&stream_header, 1, sizeof(stream_header), file) != sizeof(stream_header_t)) {
-                fseek(file, 0, SEEK_SET);
-                return std::unexpected(ESP_ERR_INVALID_RESPONSE);
-            }
-
-            bool          success{};
-            file_frames_t instance{file, stream_header, success};
-            if (!success) {
-                instance.m_file = nullptr; // Prevent the instance from closing the file
-                return std::unexpected(ESP_ERR_NO_MEM);
-            }
-
-            return instance;
-        }
-
-        [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
-            (void)m_file;
-            (void)m_frames_remaining;
-            (void)m_temp_buf_capacity;
-            (void)m_temp_buf;
-            return {};
-        }
-
-    private:
-        data_t   m_file{};
-        uint32_t m_frames_remaining{};
-        uint32_t m_temp_buf_capacity{};
-
-        std::unique_ptr<uint8_t[]> m_temp_buf;
-
-        file_frames_t(FILE* file, stream_header_t stream_header, bool& success)
-            : m_file(file), m_frames_remaining(stream_header.number_of_frames),
-              m_temp_buf_capacity(stream_header.largest_frame_size_bytes) {
-            m_temp_buf.reset(new (std::nothrow) uint8_t[m_temp_buf_capacity]);
-            success = (m_temp_buf != nullptr);
-        }
-    };
-
-    static_assert(stream_source_t<contiguous_frames_t>);
-    static_assert(stream_source_t<file_frames_t>);
-
-    template<stream_mode_t stream_mode>
+    template<stream_mode_t stream_mode = stream_mode_t::ANALYZE>
     class stream_t {
     public:
         constexpr static config_t default_config = {
@@ -617,5 +489,150 @@ namespace audio::codec::opus {
             }
         }
     };
+
+    // Takes in a span to a contiguous, flat and byte addressable buffer and hands out frames from it.
+    class contiguous_frames_t {
+    public:
+        using data_t = std::span<uint8_t>;
+
+        contiguous_frames_t()  = delete;
+        ~contiguous_frames_t() = default;
+
+        contiguous_frames_t(const contiguous_frames_t&)            = delete;
+        contiguous_frames_t& operator=(const contiguous_frames_t&) = delete;
+
+        contiguous_frames_t(contiguous_frames_t&&)            = default;
+        contiguous_frames_t& operator=(contiguous_frames_t&&) = default;
+
+        [[nodiscard]] static std::expected<contiguous_frames_t, esp_err_t> create(data_t buf) {
+            // Read stream header from the front of the passed in span
+            auto stream_header = stream_t<>::get_stream_header(buf).value_or({});
+            if (stream_header.number_of_frames == 0 || buf.size_bytes() < stream_header.total_stream_size_bytes) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            // Get the pointer to the head of the first frame (skip the stream header)
+            return contiguous_frames_t{(buf.data() + sizeof(stream_header_t)),
+                                       stream_header.number_of_frames,
+                                       (stream_header.total_stream_size_bytes - sizeof(stream_header_t))};
+        }
+
+        [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
+            if (m_frames_remaining == 0 || m_bytes_remaining == 0) {
+                return std::unexpected(ESP_ERR_NOT_FOUND);
+            }
+
+            auto frame_header = stream_t<>::get_frame_header({m_frame_head, m_bytes_remaining}).value_or({});
+            if (frame_header.size_bytes == 0) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            // Construct the frame. Advance past the frame header and point to the data directly
+            const frame_view_t frame = {.header = frame_header, .data = {(m_frame_head + sizeof(frame_header_t)), frame_header.size_bytes}};
+
+            // Advance our internal state
+            m_frame_head += (sizeof(frame_header_t) + frame_header.size_bytes);
+            m_frames_remaining--;
+            m_bytes_remaining -= (sizeof(frame_header_t) + frame_header.size_bytes);
+
+            return frame;
+        }
+
+    private:
+        uint8_t* m_frame_head{};
+        uint32_t m_frames_remaining{};
+        uint32_t m_bytes_remaining{};
+
+        contiguous_frames_t(uint8_t* first_frame, uint32_t num_frames, uint32_t bytes_remaining)
+            : m_frame_head(first_frame), m_frames_remaining(num_frames), m_bytes_remaining(bytes_remaining) {
+        }
+    };
+
+    static_assert(stream_source_t<contiguous_frames_t>);
+
+    // Takes in the file path to a file containing an opus stream.
+    class file_frames_t {
+    public:
+        using data_t = const char*;
+
+        file_frames_t() = delete;
+
+        ~file_frames_t() noexcept {
+            if (m_file) {
+                fclose(m_file);
+                m_file = nullptr;
+            }
+        }
+
+        file_frames_t(const file_frames_t&)            = delete;
+        file_frames_t& operator=(const file_frames_t&) = delete;
+
+        file_frames_t(file_frames_t&& other) noexcept {
+            m_file              = std::exchange(other.m_file, nullptr);
+            m_frames_remaining  = std::exchange(other.m_frames_remaining, 0);
+            m_temp_buf_capacity = std::exchange(other.m_temp_buf_capacity, 0);
+            m_temp_buf          = std::move(other.m_temp_buf);
+        }
+
+        file_frames_t& operator=(file_frames_t&& other) noexcept {
+            if (this != &other) {
+                if (m_file) {
+                    fclose(m_file);
+                }
+                m_file              = std::exchange(other.m_file, nullptr);
+                m_frames_remaining  = std::exchange(other.m_frames_remaining, 0);
+                m_temp_buf_capacity = std::exchange(other.m_temp_buf_capacity, 0);
+                m_temp_buf          = std::move(other.m_temp_buf);
+            }
+            return *this;
+        }
+
+        [[nodiscard]] static std::expected<file_frames_t, esp_err_t> create(data_t file_path) {
+            FILE* file = fopen(file_path, "rb");
+            if (file == nullptr) {
+                return std::unexpected(ESP_ERR_NOT_FOUND);
+            }
+
+            // Read the stream header
+            stream_header_t stream_header{};
+            if (fread(&stream_header, 1, sizeof(stream_header_t), file) != sizeof(stream_header_t)) {
+                fclose(file);
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            bool          success{};
+            file_frames_t instance{file, stream_header, success};
+            if (!success) {
+                return std::unexpected(ESP_ERR_NO_MEM);
+            }
+
+            return instance;
+        }
+
+        [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
+            if (m_frames_remaining == 0) {
+                return std::unexpected(ESP_ERR_NOT_FOUND);
+            }
+
+            return {};
+        }
+
+    private:
+        FILE*    m_file{};
+        uint32_t m_frames_remaining{};
+        uint32_t m_temp_buf_capacity{};
+
+        std::unique_ptr<uint8_t[]> m_temp_buf;
+
+        file_frames_t(FILE* file, stream_header_t stream_header, bool& success)
+            : m_file(file), m_frames_remaining(stream_header.number_of_frames),
+              m_temp_buf_capacity(stream_header.largest_frame_size_bytes) {
+            // make_unique(...) throws on failure
+            m_temp_buf.reset(new (std::nothrow) uint8_t[m_temp_buf_capacity]);
+            success = (m_temp_buf != nullptr);
+        }
+    };
+
+    static_assert(stream_source_t<file_frames_t>);
 
 } // namespace audio::codec::opus
