@@ -152,12 +152,10 @@ namespace audio::codec::opus {
          * 
          * @note This is to be used only in encoder mode.
          */
-        [[nodiscard]] std::expected<uint32_t, esp_err_t> get_input_frame_size() {
-            if constexpr (stream_mode != stream_mode_t::ENCODER) {
-                return std::unexpected(ESP_ERR_NOT_SUPPORTED);
-            } else {
-                return static_cast<uint32_t>(m_pcm_frame_size);
-            }
+        [[nodiscard]] std::expected<uint32_t, esp_err_t> get_input_frame_size()
+            requires(stream_mode == stream_mode_t::ENCODER)
+        {
+            return static_cast<uint32_t>(m_pcm_frame_size);
         }
 
         /**
@@ -172,124 +170,120 @@ namespace audio::codec::opus {
          *
          * @note This is to be used only in encoder mode.
          */
-        [[nodiscard]] std::expected<std::pair<uint32_t, bool>, esp_err_t> encode(std::span<uint8_t> pcm_in, std::span<uint8_t> opus_out) {
-            if constexpr (stream_mode != stream_mode_t::ENCODER) {
-                return std::unexpected(ESP_ERR_NOT_SUPPORTED);
-
-            } else {
-                if (pcm_in.empty() || pcm_in.data() == nullptr || opus_out.empty() || opus_out.data() == nullptr) {
-                    return std::unexpected(ESP_ERR_INVALID_ARG);
-                }
-
-                // Ensure the PCM input buffer size is a multiple of the input frame size
-                if ((pcm_in.size_bytes() % m_pcm_frame_size) != 0) {
-                    return std::unexpected(ESP_ERR_INVALID_SIZE);
-                }
-
-                // Track our current position in the encoded buffer
-                uint8_t* out_buf      = opus_out.data();
-                uint32_t out_buf_left = opus_out.size_bytes();
-
-                if (m_first_iteration) [[unlikely]] {
-                    // Header for the stream to be encoded.
-                    // When encoding is done, get_stream_header() should be called to get the total number
-                    // of frames written so it can be placed at the start of the stream before being stored or used.
-                    // For now, just reserve space at the head of the output opus stream for the header.
-
-                    if (out_buf_left < sizeof(stream_header_t)) {
-                        return std::unexpected(ESP_ERR_INVALID_SIZE);
-                    }
-
-                    out_buf += sizeof(stream_header_t);
-                    out_buf_left -= sizeof(stream_header_t);
-
-                    m_first_iteration    = false;
-                    m_num_of_frames      = 0;
-                    m_total_stream_size  = sizeof(stream_header_t);
-                    m_largest_frame_size = 0;
-                }
-
-                // Get the number of frames we're to encode this iteration
-                const uint32_t NUM_OF_FRAMES = pcm_in.size_bytes() / m_pcm_frame_size;
-
-                // Approximate the opus output buffer size needed to store the encoded PCM frames. Just a rough estimate.
-                const uint32_t total_buf_size_needed =
-                    (sizeof(frame_header_t) * NUM_OF_FRAMES) + (m_opus_frame_size_approx * NUM_OF_FRAMES);
-
-                if (out_buf_left < total_buf_size_needed) {
-                    return std::unexpected(ESP_ERR_INVALID_SIZE);
-                }
-
-                // Chunk the given buffer for encoding
-                uint32_t out_bytes_encoded = 0;
-                uint32_t in_bytes_encoded  = 0;
-
-                for (uint32_t i = 0; i < NUM_OF_FRAMES; i++) {
-                    // Reserve memory for the frame header
-                    if (out_buf_left < sizeof(frame_header_t)) {
-                        // If we've already encoded some frames, no point in returning a complete failure
-                        // Instead, return the size of the valid samples we've encoded so far,
-                        // and let the caller know this was apartial success.
-                        return std::pair{(opus_out.size_bytes() - out_buf_left), false};
-                    }
-
-                    out_buf += sizeof(frame_header_t);
-                    out_buf_left -= sizeof(frame_header_t);
-
-                    // Details of the PCM data to be encoded
-                    esp_audio_enc_in_frame_t in_frame = {
-                        .buffer = pcm_in.data() + in_bytes_encoded, // Advance head of input buffer
-                        .len    = m_pcm_frame_size,
-                    };
-
-                    esp_audio_enc_out_frame_t out_frame = {
-                        .buffer        = out_buf,
-                        .len           = out_buf_left,
-                        .encoded_bytes = 0,
-                        .pts           = 0,
-                    };
-
-                    auto ret = esp_audio_enc_process(m_encoder, &in_frame, &out_frame);
-                    if (ret != ESP_AUDIO_ERR_OK) {
-                        ESP_LOGE(TAG, "Error while encoding: %d. Iteration: %u", ret, i);
-                        // If this is the first iteration, return an error since nothing has been encoded yet
-                        if (i == 0) {
-                            return std::unexpected(ESP_ERR_NOT_FINISHED);
-                        }
-                        // But if we've already encoded some frames, no point in returning a complete failure
-                        else {
-                            // Instead, return the size of the valid samples we've encoded so far,
-                            // and let the caller know that this was a partial success
-                            return std::pair{(opus_out.size_bytes() - out_buf_left - sizeof(frame_header_t)), false};
-                        }
-                    }
-
-                    // Header for each frame
-                    const frame_header_t frame_header = {
-                        .size_bytes   = out_frame.encoded_bytes,
-                        .timestamp_ms = static_cast<uint32_t>(out_frame.pts),
-                    };
-
-                    // Walk back by the size of the frame header and place the frame header, before the frame
-                    memcpy((out_buf - sizeof(frame_header_t)), &frame_header, sizeof(frame_header_t));
-
-                    // Update our state
-                    in_bytes_encoded += m_pcm_frame_size;
-                    out_bytes_encoded += out_frame.encoded_bytes;
-
-                    out_buf += out_frame.encoded_bytes;
-                    out_buf_left -= out_frame.encoded_bytes;
-
-                    m_num_of_frames++;
-                    m_total_stream_size += sizeof(frame_header_t) + out_frame.encoded_bytes;
-                    m_largest_frame_size = std::max(out_frame.encoded_bytes, m_largest_frame_size);
-                }
-
-                ESP_LOGI(TAG, "Compression done. Input length: %u bytes. Compressed length: %u", in_bytes_encoded, out_bytes_encoded);
-
-                // Return the size of the opus stream buffer that was consumed.
-                return std::pair{(opus_out.size_bytes() - out_buf_left), true};
+        [[nodiscard]] std::expected<std::pair<uint32_t, bool>, esp_err_t> encode(std::span<uint8_t> pcm_in, std::span<uint8_t> opus_out)
+            requires(stream_mode == stream_mode_t::ENCODER)
+        {
+            if (pcm_in.empty() || pcm_in.data() == nullptr || opus_out.empty() || opus_out.data() == nullptr) {
+                return std::unexpected(ESP_ERR_INVALID_ARG);
             }
+
+            // Ensure the PCM input buffer size is a multiple of the input frame size
+            if ((pcm_in.size_bytes() % m_pcm_frame_size) != 0) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            // Track our current position in the encoded buffer
+            uint8_t* out_buf      = opus_out.data();
+            uint32_t out_buf_left = opus_out.size_bytes();
+
+            if (m_first_iteration) [[unlikely]] {
+                // Header for the stream to be encoded.
+                // When encoding is done, get_stream_header() should be called to get the total number
+                // of frames written so it can be placed at the start of the stream before being stored or used.
+                // For now, just reserve space at the head of the output opus stream for the header.
+
+                if (out_buf_left < sizeof(stream_header_t)) {
+                    return std::unexpected(ESP_ERR_INVALID_SIZE);
+                }
+
+                out_buf += sizeof(stream_header_t);
+                out_buf_left -= sizeof(stream_header_t);
+
+                m_first_iteration    = false;
+                m_num_of_frames      = 0;
+                m_total_stream_size  = sizeof(stream_header_t);
+                m_largest_frame_size = 0;
+            }
+
+            // Get the number of frames we're to encode this iteration
+            const uint32_t NUM_OF_FRAMES = pcm_in.size_bytes() / m_pcm_frame_size;
+
+            // Approximate the opus output buffer size needed to store the encoded PCM frames. Just a rough estimate.
+            const uint32_t total_buf_size_needed = (sizeof(frame_header_t) * NUM_OF_FRAMES) + (m_opus_frame_size_approx * NUM_OF_FRAMES);
+
+            if (out_buf_left < total_buf_size_needed) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            // Chunk the given buffer for encoding
+            uint32_t out_bytes_encoded = 0;
+            uint32_t in_bytes_encoded  = 0;
+
+            for (uint32_t i = 0; i < NUM_OF_FRAMES; i++) {
+                // Reserve memory for the frame header
+                if (out_buf_left < sizeof(frame_header_t)) {
+                    // If we've already encoded some frames, no point in returning a complete failure
+                    // Instead, return the size of the valid samples we've encoded so far,
+                    // and let the caller know this was apartial success.
+                    return std::pair{(opus_out.size_bytes() - out_buf_left), false};
+                }
+
+                out_buf += sizeof(frame_header_t);
+                out_buf_left -= sizeof(frame_header_t);
+
+                // Details of the PCM data to be encoded
+                esp_audio_enc_in_frame_t in_frame = {
+                    .buffer = pcm_in.data() + in_bytes_encoded, // Advance head of input buffer
+                    .len    = m_pcm_frame_size,
+                };
+
+                esp_audio_enc_out_frame_t out_frame = {
+                    .buffer        = out_buf,
+                    .len           = out_buf_left,
+                    .encoded_bytes = 0,
+                    .pts           = 0,
+                };
+
+                auto ret = esp_audio_enc_process(m_encoder, &in_frame, &out_frame);
+                if (ret != ESP_AUDIO_ERR_OK) {
+                    ESP_LOGE(TAG, "Error while encoding: %d. Iteration: %u", ret, i);
+                    // If this is the first iteration, return an error since nothing has been encoded yet
+                    if (i == 0) {
+                        return std::unexpected(ESP_ERR_NOT_FINISHED);
+                    }
+                    // But if we've already encoded some frames, no point in returning a complete failure
+                    else {
+                        // Instead, return the size of the valid samples we've encoded so far,
+                        // and let the caller know that this was a partial success
+                        return std::pair{(opus_out.size_bytes() - out_buf_left - sizeof(frame_header_t)), false};
+                    }
+                }
+
+                // Header for each frame
+                const frame_header_t frame_header = {
+                    .size_bytes   = out_frame.encoded_bytes,
+                    .timestamp_ms = static_cast<uint32_t>(out_frame.pts),
+                };
+
+                // Walk back by the size of the frame header and place the frame header, before the frame
+                memcpy((out_buf - sizeof(frame_header_t)), &frame_header, sizeof(frame_header_t));
+
+                // Update our state
+                in_bytes_encoded += m_pcm_frame_size;
+                out_bytes_encoded += out_frame.encoded_bytes;
+
+                out_buf += out_frame.encoded_bytes;
+                out_buf_left -= out_frame.encoded_bytes;
+
+                m_num_of_frames++;
+                m_total_stream_size += sizeof(frame_header_t) + out_frame.encoded_bytes;
+                m_largest_frame_size = std::max(out_frame.encoded_bytes, m_largest_frame_size);
+            }
+
+            ESP_LOGI(TAG, "Compression done. Input length: %u bytes. Compressed length: %u", in_bytes_encoded, out_bytes_encoded);
+
+            // Return the size of the opus stream buffer that was consumed.
+            return std::pair{(opus_out.size_bytes() - out_buf_left), true};
         }
 
         /**
@@ -304,12 +298,10 @@ namespace audio::codec::opus {
          *
          * @note This is to be used only in encoder mode.
          */
-        [[nodiscard]] std::expected<stream_header_t, esp_err_t> get_stream_header() {
-            if constexpr (stream_mode != stream_mode_t::ENCODER) {
-                return std::unexpected(ESP_ERR_NOT_SUPPORTED);
-            } else {
-                return stream_header_t{m_num_of_frames, m_total_stream_size, m_largest_frame_size};
-            }
+        [[nodiscard]] std::expected<stream_header_t, esp_err_t> get_stream_header()
+            requires(stream_mode == stream_mode_t::ENCODER)
+        {
+            return stream_header_t{m_num_of_frames, m_total_stream_size, m_largest_frame_size};
         }
 
         /**
@@ -322,14 +314,12 @@ namespace audio::codec::opus {
          *
          * @note This is to be used only in decoder mode.
          */
-        [[nodiscard]] esp_err_t decode(stream_source_t auto& opus_in, std::span<uint8_t> pcm_out) {
-            if constexpr (stream_mode != stream_mode_t::DECODER) {
-                return ESP_ERR_NOT_SUPPORTED;
-            } else {
-                // TODO: Implement decode(...)
+        [[nodiscard]] esp_err_t decode(stream_source_t auto& opus_in, std::span<uint8_t> pcm_out)
+            requires(stream_mode == stream_mode_t::DECODER)
+        {
+            // TODO: Implement decode(...)
 
-                return ESP_OK;
-            }
+            return ESP_OK;
         }
 
         /**
@@ -341,24 +331,21 @@ namespace audio::codec::opus {
          *
          * @note This is to be used only in analyze mode.
          */
-        [[nodiscard]] static std::expected<stream_header_t, esp_err_t> get_stream_header(std::span<const uint8_t> opus_stream) {
-            if constexpr (stream_mode != stream_mode_t::ANALYZE) {
-                return std::unexpected(ESP_ERR_NOT_SUPPORTED);
-
-            } else {
-                if (opus_stream.empty() || opus_stream.data() == nullptr) {
-                    return std::unexpected(ESP_ERR_INVALID_ARG);
-                }
-
-                if (opus_stream.size_bytes() < sizeof(stream_header_t)) {
-                    return std::unexpected(ESP_ERR_INVALID_SIZE);
-                }
-
-                stream_header_t stream_header{};
-                memcpy(&stream_header, opus_stream.data(), sizeof(stream_header_t));
-
-                return stream_header;
+        [[nodiscard]] static std::expected<stream_header_t, esp_err_t> get_stream_header(std::span<const uint8_t> opus_stream)
+            requires(stream_mode == stream_mode_t::ANALYZE)
+        {
+            if (opus_stream.empty() || opus_stream.data() == nullptr) {
+                return std::unexpected(ESP_ERR_INVALID_ARG);
             }
+
+            if (opus_stream.size_bytes() < sizeof(stream_header_t)) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            stream_header_t stream_header{};
+            memcpy(&stream_header, opus_stream.data(), sizeof(stream_header_t));
+
+            return stream_header;
         }
 
         /**
@@ -370,24 +357,21 @@ namespace audio::codec::opus {
          *
          * @note This is to be used only in analyze mode.
          */
-        [[nodiscard]] static std::expected<frame_header_t, esp_err_t> get_frame_header(std::span<const uint8_t> opus_frame) {
-            if constexpr (stream_mode != stream_mode_t::ANALYZE) {
-                return std::unexpected(ESP_ERR_NOT_SUPPORTED);
-
-            } else {
-                if (opus_frame.empty() || opus_frame.data() == nullptr) {
-                    return std::unexpected(ESP_ERR_INVALID_ARG);
-                }
-
-                if (opus_frame.size_bytes() < sizeof(frame_header_t)) {
-                    return std::unexpected(ESP_ERR_INVALID_SIZE);
-                }
-
-                frame_header_t frame_header{};
-                memcpy(&frame_header, opus_frame.data(), sizeof(frame_header_t));
-
-                return frame_header;
+        [[nodiscard]] static std::expected<frame_header_t, esp_err_t> get_frame_header(std::span<const uint8_t> opus_frame)
+            requires(stream_mode == stream_mode_t::ANALYZE)
+        {
+            if (opus_frame.empty() || opus_frame.data() == nullptr) {
+                return std::unexpected(ESP_ERR_INVALID_ARG);
             }
+
+            if (opus_frame.size_bytes() < sizeof(frame_header_t)) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            frame_header_t frame_header{};
+            memcpy(&frame_header, opus_frame.data(), sizeof(frame_header_t));
+
+            return frame_header;
         }
 
     private:
@@ -508,7 +492,7 @@ namespace audio::codec::opus {
     // Takes in a span to a buffer containing a contiguous opus stream.
     class contiguous_frames_t {
     public:
-        using data_t = std::span<uint8_t>;
+        using data_t = std::span<const uint8_t>;
 
         contiguous_frames_t()  = delete;
         ~contiguous_frames_t() = default;
@@ -521,15 +505,16 @@ namespace audio::codec::opus {
 
         [[nodiscard]] static std::expected<contiguous_frames_t, esp_err_t> create(data_t buf) {
             // Read stream header from the front of the passed in span
-            auto stream_header = stream_t<>::get_stream_header(buf).value_or({});
+            const auto stream_header = stream_t<>::get_stream_header(buf).value_or({});
             if (stream_header.number_of_frames == 0 || buf.size_bytes() < stream_header.total_stream_size_bytes) {
                 return std::unexpected(ESP_ERR_INVALID_SIZE);
             }
 
             // Get the pointer to the head of the first frame (skip the stream header)
-            return contiguous_frames_t{(buf.data() + sizeof(stream_header_t)),
+            return contiguous_frames_t{buf.data() + sizeof(stream_header_t),
                                        stream_header.number_of_frames,
-                                       (stream_header.total_stream_size_bytes - sizeof(stream_header_t))};
+                                       stream_header.total_stream_size_bytes - sizeof(stream_header_t),
+                                       stream_header.largest_frame_size_bytes};
         }
 
         [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
@@ -537,15 +522,19 @@ namespace audio::codec::opus {
                 return std::unexpected(ESP_ERR_NOT_FOUND);
             }
 
-            auto frame_header = stream_t<>::get_frame_header({m_frame_head, m_bytes_remaining}).value_or({});
-            if (frame_header.size_bytes == 0) {
-                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            const auto frame_header = stream_t<>::get_frame_header({m_frame_head, m_bytes_remaining}).value_or({});
+            if (frame_header.size_bytes == 0 || frame_header.size_bytes > m_largest_frame_size ||
+                sizeof(frame_header_t) + frame_header.size_bytes > m_bytes_remaining) {
+                // Can't trust size_bytes enough to safely skip past this frame, so we stop
+                // iterating rather than risk advancing the data head off of unknown data.
+                m_frames_remaining = 0;
+                m_bytes_remaining  = 0;
             }
 
             // Advance internal state
-            m_frame_head += (sizeof(frame_header_t) + frame_header.size_bytes);
             m_frames_remaining--;
-            m_bytes_remaining -= (sizeof(frame_header_t) + frame_header.size_bytes);
+            m_frame_head += sizeof(frame_header_t) + frame_header.size_bytes;
+            m_bytes_remaining -= sizeof(frame_header_t) + frame_header.size_bytes;
 
             // Construct the frame. Since frame head already points to the next frame, walk back by
             // the size of this frame's data so we point to the data in the frame.
@@ -553,12 +542,15 @@ namespace audio::codec::opus {
         }
 
     private:
-        uint8_t* m_frame_head{};
+        const uint8_t* m_frame_head{};
+
         uint32_t m_frames_remaining{};
         uint32_t m_bytes_remaining{};
+        uint32_t m_largest_frame_size{};
 
-        explicit contiguous_frames_t(uint8_t* first_frame, uint32_t num_frames, uint32_t bytes_remaining)
-            : m_frame_head(first_frame), m_frames_remaining(num_frames), m_bytes_remaining(bytes_remaining) {
+        explicit contiguous_frames_t(const uint8_t* first_frame, uint32_t num_frames, uint32_t bytes_remaining, uint32_t max_frame_size)
+            : m_frame_head(first_frame), m_frames_remaining(num_frames), m_bytes_remaining(bytes_remaining),
+              m_largest_frame_size(max_frame_size) {
         }
     };
 
@@ -628,24 +620,30 @@ namespace audio::codec::opus {
                 return std::unexpected(ESP_ERR_NOT_FOUND);
             }
 
+            auto advance_state = [&] {
+                m_frames_remaining--;
+            };
+
             // Get the frame header
             frame_header_t frame_header{};
             if (fread(&frame_header, 1, sizeof(frame_header_t), m_file) != sizeof(frame_header_t)) {
-                return std::unexpected(ESP_ERR_INVALID_SIZE);
+                advance_state();
+                return std::unexpected(ESP_ERR_INVALID_RESPONSE);
             }
 
             // Validate the size of the frame before using it
             if (frame_header.size_bytes == 0 || frame_header.size_bytes > m_largest_frame_size) {
+                advance_state();
                 return std::unexpected(ESP_ERR_INVALID_SIZE);
             }
 
             // Get and store the frame's data in our internal buffer
             if (fread(m_internal_storage.get(), 1, frame_header.size_bytes, m_file) != frame_header.size_bytes) {
-                return std::unexpected(ESP_ERR_INVALID_SIZE);
+                advance_state();
+                return std::unexpected(ESP_ERR_INVALID_RESPONSE);
             }
 
-            // Advance internal state
-            m_frames_remaining--;
+            advance_state();
 
             // To avoid using too much memory and excessive heap allocations, we reuse our internal buffer.
             // This does mean that the frame data is only valid till the next call to next(...)
