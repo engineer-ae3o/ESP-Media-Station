@@ -68,8 +68,7 @@ namespace audio::codec::opus {
     // stream).
     template<typename T>
     concept stream_source_t = requires(T& source) {
-        typename T::data_t;
-        { source.create(std::declval<typename T::data_t>()) } -> std::same_as<std::expected<T, esp_err_t>>;
+        { T::create(std::declval<typename T::data_t>()) } -> std::same_as<std::expected<T, esp_err_t>>;
         { source.next() } -> std::same_as<std::expected<frame_view_t, esp_err_t>>;
     };
 
@@ -149,7 +148,9 @@ namespace audio::codec::opus {
          *        PCM frames that are constant size, so all calls to encode(...) should
          *        pass in input PCM buffers whose sizes are aligned to this number.
          * 
-         * @return The frame size.
+         * @return The input PCM frame size.
+         * 
+         * @note This is to be used only in encoder mode.
          */
         [[nodiscard]] std::expected<uint32_t, esp_err_t> get_input_frame_size() {
             if constexpr (stream_mode != stream_mode_t::ENCODER) {
@@ -226,14 +227,10 @@ namespace audio::codec::opus {
                 for (uint32_t i = 0; i < NUM_OF_FRAMES; i++) {
                     // Reserve memory for the frame header
                     if (out_buf_left < sizeof(frame_header_t)) {
-                        if (i == 0) {
-                            return std::unexpected(ESP_ERR_NO_MEM);
-                        }
-                        // But if we've already encoded some frames, no point in returning a complete failure
-                        else {
-                            // Instead, return the size of the valid samples we've encoded so far, and let the caller know that this was a partial success
-                            return std::pair{(opus_out.size_bytes() - out_buf_left - sizeof(frame_header_t)), false};
-                        }
+                        // If we've already encoded some frames, no point in returning a complete failure
+                        // Instead, return the size of the valid samples we've encoded so far,
+                        // and let the caller know this was apartial success.
+                        return std::pair{(opus_out.size_bytes() - out_buf_left), false};
                     }
 
                     out_buf += sizeof(frame_header_t);
@@ -261,7 +258,8 @@ namespace audio::codec::opus {
                         }
                         // But if we've already encoded some frames, no point in returning a complete failure
                         else {
-                            // Instead, return the size of the valid samples we've encoded so far, and let the caller know that this was a partial success
+                            // Instead, return the size of the valid samples we've encoded so far,
+                            // and let the caller know that this was a partial success
                             return std::pair{(opus_out.size_bytes() - out_buf_left - sizeof(frame_header_t)), false};
                         }
                     }
@@ -328,6 +326,7 @@ namespace audio::codec::opus {
             if constexpr (stream_mode != stream_mode_t::DECODER) {
                 return ESP_ERR_NOT_SUPPORTED;
             } else {
+                // TODO: Implement decode(...)
 
                 return ESP_OK;
             }
@@ -543,18 +542,14 @@ namespace audio::codec::opus {
                 return std::unexpected(ESP_ERR_INVALID_SIZE);
             }
 
-            // Construct the frame. Skip the frame header and point to the data directly
-            const frame_view_t frame = {
-                frame_header,
-                {(m_frame_head + sizeof(frame_header_t)), frame_header.size_bytes},
-            };
-
             // Advance internal state
             m_frame_head += (sizeof(frame_header_t) + frame_header.size_bytes);
             m_frames_remaining--;
             m_bytes_remaining -= (sizeof(frame_header_t) + frame_header.size_bytes);
 
-            return frame;
+            // Construct the frame. Since frame head already points to the next frame, walk back by
+            // the size of this frame's data so we point to the data in the frame.
+            return frame_view_t{frame_header, {(m_frame_head - frame_header.size_bytes), frame_header.size_bytes}};
         }
 
     private:
@@ -562,7 +557,7 @@ namespace audio::codec::opus {
         uint32_t m_frames_remaining{};
         uint32_t m_bytes_remaining{};
 
-        contiguous_frames_t(uint8_t* first_frame, uint32_t num_frames, uint32_t bytes_remaining)
+        explicit contiguous_frames_t(uint8_t* first_frame, uint32_t num_frames, uint32_t bytes_remaining)
             : m_frame_head(first_frame), m_frames_remaining(num_frames), m_bytes_remaining(bytes_remaining) {
         }
     };
@@ -664,7 +659,7 @@ namespace audio::codec::opus {
 
         std::unique_ptr<uint8_t[]> m_internal_storage;
 
-        file_frames_t(FILE* file, stream_header_t stream_header, bool& success)
+        explicit file_frames_t(FILE* file, stream_header_t stream_header, bool& success)
             : m_file(file), m_frames_remaining(stream_header.number_of_frames),
               m_largest_frame_size(stream_header.largest_frame_size_bytes) {
             // make_unique(...) throws on failure
