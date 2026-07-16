@@ -54,18 +54,18 @@ namespace audio::codec::opus {
         esp_opus_enc_application_t mode{};
     };
 
-    // These define the implementation of the input opus stream sources. This
+    struct frame_view_t {
+        frame_header_t           frame_header{};
+        std::span<const uint8_t> frame_data;
+    };
+
+    // This defines the implementation of the input opus stream sources. This
     // is because the data could either be from a file or it could be in a flat
     // contiguous buffer, and iterating over the entire range of data in these
     // sources have different implementations. So we implement the iteration here
     // and use concepts to ensure they meet the constraints and API required by
-    // the interfaces that use them (DECODE and ANALYZE both use it since they have
-    // to iterate over an opus stream and get the frames).
-    struct frame_view_t {
-        frame_header_t           header{};
-        std::span<const uint8_t> data;
-    };
-
+    // the interfaces that use them (DECODE use it since it has to iterate an opus
+    // stream).
     template<typename T>
     concept stream_source_t = requires(T& source) {
         typename T::data_t;
@@ -142,6 +142,21 @@ namespace audio::codec::opus {
         static void deinit() {
             esp_audio_enc_unregister_default();
             esp_audio_dec_unregister_default();
+        }
+
+        /**
+         * @brief Get the size of an input PCM frame. When encoding, the API takes in
+         *        PCM frames that are constant size, so all calls to encode(...) should
+         *        pass in input PCM buffers whose sizes are aligned to this number.
+         * 
+         * @return The frame size.
+         */
+        [[nodiscard]] std::expected<uint32_t, esp_err_t> get_input_frame_size() {
+            if constexpr (stream_mode != stream_mode_t::ENCODER) {
+                return std::unexpected(ESP_ERR_NOT_SUPPORTED);
+            } else {
+                return static_cast<uint32_t>(m_pcm_frame_size);
+            }
         }
 
         /**
@@ -490,7 +505,8 @@ namespace audio::codec::opus {
         }
     };
 
-    // Takes in a span to a contiguous, flat and byte addressable buffer and hands out frames from it.
+    // Iterate over an opus stream stored with different mechanisms
+    // Takes in a span to a buffer containing a contiguous opus stream.
     class contiguous_frames_t {
     public:
         using data_t = std::span<uint8_t>;
@@ -527,10 +543,13 @@ namespace audio::codec::opus {
                 return std::unexpected(ESP_ERR_INVALID_SIZE);
             }
 
-            // Construct the frame. Advance past the frame header and point to the data directly
-            const frame_view_t frame = {.header = frame_header, .data = {(m_frame_head + sizeof(frame_header_t)), frame_header.size_bytes}};
+            // Construct the frame. Skip the frame header and point to the data directly
+            const frame_view_t frame = {
+                frame_header,
+                {(m_frame_head + sizeof(frame_header_t)), frame_header.size_bytes},
+            };
 
-            // Advance our internal state
+            // Advance internal state
             m_frame_head += (sizeof(frame_header_t) + frame_header.size_bytes);
             m_frames_remaining--;
             m_bytes_remaining -= (sizeof(frame_header_t) + frame_header.size_bytes);
@@ -550,7 +569,7 @@ namespace audio::codec::opus {
 
     static_assert(stream_source_t<contiguous_frames_t>);
 
-    // Takes in the file path to a file containing an opus stream.
+    // Takes in the file path to a file containing the opus stream.
     class file_frames_t {
     public:
         using data_t = const char*;
@@ -568,10 +587,10 @@ namespace audio::codec::opus {
         file_frames_t& operator=(const file_frames_t&) = delete;
 
         file_frames_t(file_frames_t&& other) noexcept {
-            m_file              = std::exchange(other.m_file, nullptr);
-            m_frames_remaining  = std::exchange(other.m_frames_remaining, 0);
-            m_temp_buf_capacity = std::exchange(other.m_temp_buf_capacity, 0);
-            m_temp_buf          = std::move(other.m_temp_buf);
+            m_file               = std::exchange(other.m_file, nullptr);
+            m_frames_remaining   = std::exchange(other.m_frames_remaining, 0);
+            m_largest_frame_size = std::exchange(other.m_largest_frame_size, 0);
+            m_internal_storage   = std::move(other.m_internal_storage);
         }
 
         file_frames_t& operator=(file_frames_t&& other) noexcept {
@@ -579,10 +598,10 @@ namespace audio::codec::opus {
                 if (m_file) {
                     fclose(m_file);
                 }
-                m_file              = std::exchange(other.m_file, nullptr);
-                m_frames_remaining  = std::exchange(other.m_frames_remaining, 0);
-                m_temp_buf_capacity = std::exchange(other.m_temp_buf_capacity, 0);
-                m_temp_buf          = std::move(other.m_temp_buf);
+                m_file               = std::exchange(other.m_file, nullptr);
+                m_frames_remaining   = std::exchange(other.m_frames_remaining, 0);
+                m_largest_frame_size = std::exchange(other.m_largest_frame_size, 0);
+                m_internal_storage   = std::move(other.m_internal_storage);
             }
             return *this;
         }
@@ -614,22 +633,43 @@ namespace audio::codec::opus {
                 return std::unexpected(ESP_ERR_NOT_FOUND);
             }
 
-            return {};
+            // Get the frame header
+            frame_header_t frame_header{};
+            if (fread(&frame_header, 1, sizeof(frame_header_t), m_file) != sizeof(frame_header_t)) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            // Validate the size of the frame before using it
+            if (frame_header.size_bytes == 0 || frame_header.size_bytes > m_largest_frame_size) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            // Get and store the frame's data in our internal buffer
+            if (fread(m_internal_storage.get(), 1, frame_header.size_bytes, m_file) != frame_header.size_bytes) {
+                return std::unexpected(ESP_ERR_INVALID_SIZE);
+            }
+
+            // Advance internal state
+            m_frames_remaining--;
+
+            // To avoid using too much memory and excessive heap allocations, we reuse our internal buffer.
+            // This does mean that the frame data is only valid till the next call to next(...)
+            return frame_view_t{frame_header, {m_internal_storage.get(), frame_header.size_bytes}};
         }
 
     private:
         FILE*    m_file{};
         uint32_t m_frames_remaining{};
-        uint32_t m_temp_buf_capacity{};
+        uint32_t m_largest_frame_size{};
 
-        std::unique_ptr<uint8_t[]> m_temp_buf;
+        std::unique_ptr<uint8_t[]> m_internal_storage;
 
         file_frames_t(FILE* file, stream_header_t stream_header, bool& success)
             : m_file(file), m_frames_remaining(stream_header.number_of_frames),
-              m_temp_buf_capacity(stream_header.largest_frame_size_bytes) {
+              m_largest_frame_size(stream_header.largest_frame_size_bytes) {
             // make_unique(...) throws on failure
-            m_temp_buf.reset(new (std::nothrow) uint8_t[m_temp_buf_capacity]);
-            success = (m_temp_buf != nullptr);
+            m_internal_storage.reset(new (std::nothrow) uint8_t[m_largest_frame_size]);
+            success = (m_internal_storage != nullptr);
         }
     };
 
