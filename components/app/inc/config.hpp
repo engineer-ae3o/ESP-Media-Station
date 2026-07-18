@@ -76,7 +76,7 @@ namespace config {
     constexpr inline size_t AUDIO_TASK_STACK_SIZE = 6 * 1024; // Should be suitable for audio buffers management and audio codecs
     constexpr inline size_t AUDIO_TASK_PRIORITY   = 12;       // One of the more important tasks in the system
 
-    constexpr inline size_t RECORD_TASK_STACK_SIZE = 4 * 1024; // Handles OPUS codec. Should be enough
+    constexpr inline size_t RECORD_TASK_STACK_SIZE = 4 * 1024; // Handles the opus codec. Should be enough
     constexpr inline size_t RECORD_TASK_PRIORITY   = 6;        // Average
 
     constexpr inline size_t RENDER_TASK_STACK_SIZE = 6 * 1024; // The call stack for lv_timer_handler(...) runs deep
