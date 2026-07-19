@@ -113,7 +113,7 @@ namespace audio::mic {
          * 
          * @note If the buffers aren't read on time, the streaming task blocks and polls till a buffer is read.
          */
-        [[nodiscard]] std::expected<std::span<const int32_t, RECV_BUF_SIZE_ELEMENTS>, esp_err_t> get_filled_buffer();
+        [[nodiscard]] std::expected<std::span<int32_t, RECV_BUF_SIZE_ELEMENTS>, esp_err_t> get_filled_buffer();
 
         /**
          * @brief Returns a previously taken buffer.

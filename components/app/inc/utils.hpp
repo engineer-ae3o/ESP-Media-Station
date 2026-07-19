@@ -1,10 +1,13 @@
 #pragma once
 
-#include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "driver/spi_master.h"
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_system.h"
+
+#include <source_location>
 
 #define TRY(func)                                                                                                                          \
     do {                                                                                                                                   \
@@ -23,12 +26,27 @@
         }                                                                                                                                  \
     } while (0)
 
+#define TRY_WITH_FUNC_VOID(func, err_cb)                                                                                                   \
+    do {                                                                                                                                   \
+        if (auto ret_ = (func); ret_ != ESP_OK) {                                                                                          \
+            ESP_LOGE("ERROR", "%s:(%s):Line %d failed: %s", __FILE__, __PRETTY_FUNCTION__, __LINE__, esp_err_to_name(ret_));               \
+            (err_cb);                                                                                                                      \
+        }                                                                                                                                  \
+    } while (0)
+
+#define TRY_THEN_LOG(func, msg)                                                                                                            \
+    do {                                                                                                                                   \
+        if (auto ret_ = (func); ret_ != ESP_OK) {                                                                                          \
+            ESP_LOGE(TAG, "%s: %s", msg, esp_err_to_name(ret_));                                                                           \
+        }                                                                                                                                  \
+    } while (0)
+
 namespace utils {
 
     struct spi_bus_config_t {
         spi_host_device_t bus{};
 
-        uint32_t flags{SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_IOMUX_PINS};
+        uint32_t flags{};
         int      max_trans_size{};
 
         gpio_num_t mosi_pin{GPIO_NUM_NC};
@@ -57,6 +75,17 @@ namespace utils {
         TRY(spi_bus_initialize(config.bus, &bus_config, SPI_DMA_CH_AUTO));
 
         return ESP_OK;
-    };
+    }
+
+    [[noreturn]] inline void fatal(std::source_location location = std::source_location::current()) {
+        ESP_LOGE("FATAL", "Unrecoverable error from %s (%s): %u", location.function_name(), location.file_name(), location.line());
+        esp_system_abort("Fatal error. Cannot recover");
+    }
+
+    [[noreturn]] inline void reboot(std::source_location location = std::source_location::current()) {
+        ESP_LOGE("FATAL", "Unrecoverable error from %s (%s): %u", location.function_name(), location.file_name(), location.line());
+        ESP_LOGE("FATAL", "Rebooting system.");
+        esp_restart();
+    }
 
 } // namespace utils
