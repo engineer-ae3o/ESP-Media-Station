@@ -11,6 +11,7 @@
 #include <span>
 #include <tuple>
 #include <memory>
+#include <cstdio>
 #include <variant>
 #include <cassert>
 #include <cstdint>
@@ -159,7 +160,7 @@ namespace audio::codec::opus {
          * 
          * @note This is to be used only in encoder mode.
          */
-        [[nodiscard]] std::expected<uint32_t, esp_err_t> get_input_frame_size()
+        [[nodiscard]] uint32_t get_input_frame_size()
             requires(stream_mode == stream_mode_t::ENCODER)
         {
             return static_cast<uint32_t>(m_pcm_frame_size);
@@ -351,27 +352,28 @@ namespace audio::codec::opus {
             uint8_t* out_buf      = pcm_out.data();
             uint32_t out_buf_left = pcm_out.size_bytes();
 
+            auto return_on_err = [&](esp_err_t err, uint32_t i) -> std::expected<std::pair<std::span<uint8_t>, bool>, esp_err_t> {
+                if (i == 0) {
+                    return std::unexpected(err);
+                } else {
+                    return std::pair{std::span{pcm_out.data(), (pcm_out.size_bytes() - out_buf_left)}, false};
+                }
+            };
+
             for (uint32_t i{}; i < NUM_OF_FRAMES; i++) {
                 // Get next frame from the source iterator
                 std::expected<frame_view_t, esp_err_t> frame = opus_in.next();
                 if (!frame) {
-                    // If this is the first iteration, return an error since nothing has been decoded yet
-                    if (i == 0) {
-                        return std::unexpected(frame.error());
-                    }
-                    // But if we've already decoded some frames, no point in returning a complete failure
-                    else {
-                        // Instead, return the size of the valid samples we've decoded so far,
-                        // and let the caller know that this was a partial success
-                        return std::pair{std::span{pcm_out.data(), (pcm_out.size_bytes() - out_buf_left)}, false};
-                    }
+                    return return_on_err(frame.error(), i);
                 }
 
                 // Retrieve the frame header and the frame's data from the frame
                 const auto& [frame_header, frame_data] = frame.value();
 
                 // Check that the opus frame size in the frame header matches the size in the span
-                assert(frame_header.size_bytes == frame_data.size_bytes());
+                if (frame_header.size_bytes != frame_data.size_bytes()) {
+                    return return_on_err(ESP_ERR_INVALID_SIZE, i);
+                }
 
                 // Details of opus data to be decoded
                 esp_audio_dec_in_raw_t in_frame = {
@@ -391,20 +393,13 @@ namespace audio::codec::opus {
                 auto ret = esp_audio_dec_process(m_decoder, &in_frame, &out_frame);
                 if (ret != ESP_AUDIO_ERR_OK) {
                     ESP_LOGE(TAG, "Error while decoding: %d. Iteration: %u", ret, i);
-                    // If this is the first iteration, return an error since nothing has been decoded yet
-                    if (i == 0) {
-                        return std::unexpected(ESP_ERR_NOT_FINISHED);
-                    }
-                    // But if we've already decoded some frames, no point in returning a complete failure
-                    else {
-                        // Instead, return the size of the valid samples we've decoded so far,
-                        // and let the caller know that this was a partial success
-                        return std::pair{std::span{pcm_out.data(), (pcm_out.size_bytes() - out_buf_left)}, false};
-                    }
+                    return return_on_err(ESP_ERR_NOT_FINISHED, i);
                 }
 
                 // Check that our calculation matched the output from the codec
-                assert(PCM_FRAME_SIZE == out_frame.decoded_size);
+                if (PCM_FRAME_SIZE != out_frame.decoded_size) {
+                    return return_on_err(ESP_ERR_INVALID_RESPONSE, i);
+                }
 
                 // Update state
                 out_buf += PCM_FRAME_SIZE;
