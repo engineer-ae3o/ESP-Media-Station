@@ -1,8 +1,5 @@
 #pragma once
 
-#include "utils.hpp"
-#include "inmp441.hpp"
-
 #include "esp_err.h"
 #include "esp_log.h"
 
@@ -14,6 +11,7 @@
 #include <span>
 #include <tuple>
 #include <memory>
+#include <variant>
 #include <cassert>
 #include <cstdint>
 #include <utility>
@@ -50,6 +48,11 @@ namespace audio::codec::opus {
         int frame_duration_ms{};
 
         esp_opus_enc_application_t mode{};
+
+        // Don't ask me why different types are used. I didn't write esp_audio_codec.
+        // Make sure the enum type used here matches frame_duration_ms. For some reason,
+        // the enum type does not match it's equivalent underlying value.
+        std::variant<esp_opus_enc_frame_duration_t, esp_opus_dec_frame_duration_t> duration_type;
     };
 
     struct frame_view_t {
@@ -74,13 +77,17 @@ namespace audio::codec::opus {
     class stream_t {
     public:
         constexpr static config_t default_config = {
-            .bit_rate    = 40'000,
-            .complexity  = 4,
-            .sample_rate = mic::inmp441_t::SAMPLE_RATE_HZ,
-            .mode        = ESP_OPUS_ENC_APPLICATION_VOIP,
+            .bit_rate          = 40'000,
+            .complexity        = 4,
+            .sample_rate       = 48'000,
+            .frame_duration_ms = 20,
+            .mode              = ESP_OPUS_ENC_APPLICATION_VOIP,
+            .duration_type     = ESP_OPUS_ENC_FRAME_DURATION_20_MS,
         };
 
-        [[nodiscard]] static std::expected<stream_t, esp_err_t> create(const config_t& config = default_config) {
+        [[nodiscard]] static std::expected<stream_t, esp_err_t> create(const config_t& config = default_config)
+            requires(stream_mode != stream_mode_t::ANALYZE)
+        {
             stream_t instance{};
             if (auto ret = instance.start(config); ret != ESP_OK) {
                 return std::unexpected(ret);
@@ -96,6 +103,7 @@ namespace audio::codec::opus {
         stream_t& operator=(const stream_t&) = delete;
 
         stream_t(stream_t&& other) noexcept {
+            m_config                  = std::exchange(other.m_config, {});
             m_encoder                 = std::exchange(other.m_encoder, nullptr);
             m_decoder                 = std::exchange(other.m_decoder, nullptr);
             m_num_of_frames           = std::exchange(other.m_num_of_frames, 0);
@@ -109,6 +117,7 @@ namespace audio::codec::opus {
         stream_t& operator=(stream_t&& other) noexcept {
             if (this != &other) {
                 end();
+                m_config                  = std::exchange(other.m_config, {});
                 m_encoder                 = std::exchange(other.m_encoder, nullptr);
                 m_decoder                 = std::exchange(other.m_decoder, nullptr);
                 m_num_of_frames           = std::exchange(other.m_num_of_frames, 0);
@@ -333,8 +342,8 @@ namespace audio::codec::opus {
 
             // Get the number of PCM frames that can fit into the output span passed
             // Truncate if needed so we always use <= the buffer size
-            const uint32_t num_of_frames = pcm_out.size_bytes() / PCM_FRAME_SIZE;
-            if (num_of_frames == 0) {
+            const uint32_t NUM_OF_FRAMES = pcm_out.size_bytes() / PCM_FRAME_SIZE;
+            if (NUM_OF_FRAMES == 0) {
                 return std::unexpected(ESP_ERR_INVALID_SIZE);
             }
 
@@ -342,7 +351,7 @@ namespace audio::codec::opus {
             uint8_t* out_buf      = pcm_out.data();
             uint32_t out_buf_left = pcm_out.size_bytes();
 
-            for (uint32_t i{}; i < num_of_frames; i++) {
+            for (uint32_t i{}; i < NUM_OF_FRAMES; i++) {
                 // Get next frame from the source iterator
                 std::expected<frame_view_t, esp_err_t> frame = opus_in.next();
                 if (!frame) {
@@ -361,7 +370,7 @@ namespace audio::codec::opus {
                 // Retrieve the frame header and the frame's data from the frame
                 const auto& [frame_header, frame_data] = frame.value();
 
-                // Check that the opus frame size in the frame header matches the
+                // Check that the opus frame size in the frame header matches the size in the span
                 assert(frame_header.size_bytes == frame_data.size_bytes());
 
                 // Details of opus data to be decoded
@@ -398,6 +407,8 @@ namespace audio::codec::opus {
                 assert(PCM_FRAME_SIZE == out_frame.decoded_size);
 
                 // Update state
+                out_buf += PCM_FRAME_SIZE;
+                out_buf_left -= PCM_FRAME_SIZE;
             }
 
             return std::pair{std::span{pcm_out.data(), (pcm_out.size_bytes() - out_buf_left)}, true};
@@ -486,15 +497,22 @@ namespace audio::codec::opus {
         stream_t() = default;
 
         [[nodiscard]] esp_err_t start(const config_t config) {
+            // Copy config
+            m_config = config;
+
             if constexpr (stream_mode == stream_mode_t::ENCODER) {
-                m_config = config;
                 // Configure the opus encoder
+                const auto* duration_type = std::get_if<esp_opus_enc_frame_duration_t>(&config.duration_type);
+                if (duration_type == nullptr) {
+                    return ESP_ERR_INVALID_ARG;
+                }
+
                 esp_opus_enc_config_t opus_enc_config = {
                     .sample_rate      = m_config.sample_rate,
                     .channel          = ESP_AUDIO_MONO,
-                    .bits_per_sample  = ESP_AUDIO_BIT16,
+                    .bits_per_sample  = ESP_AUDIO_BIT16, // The codec only supports 16 bit PCM
                     .bitrate          = m_config.bit_rate,
-                    .frame_duration   = ESP_OPUS_ENC_FRAME_DURATION_20_MS,
+                    .frame_duration   = *duration_type,
                     .application_mode = m_config.mode,
                     .complexity       = m_config.complexity,
                     .enable_fec       = true,
@@ -534,12 +552,16 @@ namespace audio::codec::opus {
                 }
 
             } else if constexpr (stream_mode == stream_mode_t::DECODER) {
-                m_config = config;
                 // Configure the opus decoder
+                const auto* duration_type = std::get_if<esp_opus_dec_frame_duration_t>(&config.duration_type);
+                if (duration_type == nullptr) {
+                    return ESP_ERR_INVALID_ARG;
+                }
+
                 esp_opus_dec_cfg_t opus_dec_config = {
                     .sample_rate    = static_cast<uint32_t>(m_config.sample_rate),
                     .channel        = ESP_AUDIO_MONO,
-                    .frame_duration = ESP_OPUS_DEC_FRAME_DURATION_20_MS,
+                    .frame_duration = *duration_type,
                     .self_delimited = false,
                 };
 
@@ -592,7 +614,7 @@ namespace audio::codec::opus {
             // Read stream header from the front of the passed in span
             const auto stream_header = stream_t<>::get_stream_header(buf).value_or({});
             if (stream_header.number_of_frames == 0 || stream_header.total_stream_size == 0 || stream_header.largest_opus_frame_size == 0 ||
-                buf.size_bytes() != stream_header.total_stream_size || stream_header.total_stream_size < sizeof(stream_header_t)) {
+                buf.size_bytes() < stream_header.total_stream_size || stream_header.total_stream_size < sizeof(stream_header_t)) {
                 return std::unexpected(ESP_ERR_INVALID_SIZE);
             }
 
@@ -714,30 +736,31 @@ namespace audio::codec::opus {
                 return std::unexpected(ESP_ERR_NOT_FOUND);
             }
 
-            auto advance_state = [&] {
+            auto advance_state_on_err = [&] {
                 m_frames_remaining = 0;
             };
 
             // Get the frame header
             frame_header_t frame_header{};
             if (fread(&frame_header, 1, sizeof(frame_header_t), m_file) != sizeof(frame_header_t)) {
-                advance_state();
+                advance_state_on_err();
                 return std::unexpected(ESP_ERR_INVALID_RESPONSE);
             }
 
             // Validate the size of the frame before using it
             if (frame_header.size_bytes == 0 || frame_header.size_bytes > m_largest_opus_frame_size) {
-                advance_state();
+                advance_state_on_err();
                 return std::unexpected(ESP_ERR_INVALID_SIZE);
             }
 
             // Get and store the frame's data in our internal buffer
             if (fread(m_internal_storage.get(), 1, frame_header.size_bytes, m_file) != frame_header.size_bytes) {
-                advance_state();
+                advance_state_on_err();
                 return std::unexpected(ESP_ERR_INVALID_RESPONSE);
             }
 
-            advance_state();
+            // Advance state
+            m_frames_remaining--;
 
             // To avoid using too much memory and excessive heap allocations, we reuse our internal buffer.
             // This does mean that the frame data is only valid till the next call to next(...)
