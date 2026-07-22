@@ -239,7 +239,7 @@ namespace audio::codec::opus {
                 // Details of the PCM data to be encoded
                 esp_audio_enc_in_frame_t in_frame = {
                     .buffer = pcm_in.data() + in_bytes_encoded, // Advance head of input buffer
-                    .len    = m_pcm_frame_size,
+                    .len    = static_cast<uint32_t>(m_pcm_frame_size),
                 };
 
                 esp_audio_enc_out_frame_t out_frame = {

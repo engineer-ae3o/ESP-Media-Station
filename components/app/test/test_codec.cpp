@@ -18,9 +18,9 @@ namespace {
 
     using namespace audio::codec::opus;
 
-    constexpr int SAMPLE_RATE_HZ  = 48'000;
-    constexpr int FRAME_MS        = 20;
-    constexpr int SECONDS_TO_TEST = 2;
+    constexpr int SAMPLE_RATE_HZ    = 48'000;
+    constexpr int FRAME_DURATION_MS = 20;
+    constexpr int SECONDS_TO_TEST   = 2;
 
     // LittleFS is mounted at /lfs. Tests that touch disk get their own
     // subdirectory so they don't scatter files across the mount, and that
@@ -28,23 +28,26 @@ namespace {
     constexpr const char* TEST_DIR_PATH  = "/lfs/codec";
     constexpr const char* TEST_FILE_PATH = "/lfs/codec/opus_test_stream.bin";
 
-    consteval config_t get_encoder_config() {
-        config_t cfg{};
-        cfg.bit_rate          = 40'000;
-        cfg.complexity        = 4;
-        cfg.sample_rate       = SAMPLE_RATE_HZ;
-        cfg.frame_duration_ms = FRAME_MS;
-        cfg.mode              = ESP_OPUS_ENC_APPLICATION_VOIP;
-        cfg.duration_type     = ESP_OPUS_ENC_FRAME_DURATION_20_MS;
-        return cfg;
+    consteval auto get_encoder_config() {
+        return config_t{
+            .bit_rate          = 40'000,
+            .complexity        = 4,
+            .sample_rate       = SAMPLE_RATE_HZ,
+            .frame_duration_ms = FRAME_DURATION_MS,
+            .mode              = ESP_OPUS_ENC_APPLICATION_VOIP,
+            .duration_type     = ESP_OPUS_ENC_FRAME_DURATION_20_MS,
+        };
     }
 
-    consteval config_t get_decoder_config() {
-        config_t cfg{};
-        cfg.sample_rate       = SAMPLE_RATE_HZ;
-        cfg.frame_duration_ms = FRAME_MS;
-        cfg.duration_type     = ESP_OPUS_DEC_FRAME_DURATION_20_MS;
-        return cfg;
+    consteval auto get_decoder_config() {
+        return config_t{
+            .bit_rate          = 40'000,
+            .complexity        = 4,
+            .sample_rate       = SAMPLE_RATE_HZ,
+            .frame_duration_ms = FRAME_DURATION_MS,
+            .mode              = ESP_OPUS_ENC_APPLICATION_VOIP, // Not needed in decoder mode
+            .duration_type     = ESP_OPUS_DEC_FRAME_DURATION_20_MS,
+        };
     }
 
     // Deliberately hands the encoder a decoder-shaped duration_type (and vice
@@ -61,8 +64,7 @@ namespace {
         return cfg;
     }
 
-    // Registers/unregisters the codec library once per test, mirroring the
-    // way spi_test_fixture_t owns bus setup/teardown in the other driver tests.
+    // Registers/unregisters the codec library once per test.
     struct codec_fixture_t {
         codec_fixture_t() {
             stream_t<>::init();
@@ -147,7 +149,7 @@ namespace {
     }
 
     // Creates TEST_DIR_PATH on construction and removes it (along with any
-    // file left inside it) on destruction, so file_frames_t tests get a
+    // file left inside it) on destruction, so file_stream_t tests get a
     // clean, scoped place on LittleFS to write to.
     struct lfs_test_dir_fixture_t {
         lfs_test_dir_fixture_t() {
@@ -263,9 +265,9 @@ TEST_CASE("Encoding a full buffer produces a header matching the encoded frames"
     TEST_ASSERT_GREATER_THAN_UINT32(0, stream.frame_count);
     TEST_ASSERT_GREATER_THAN_UINT32(sizeof(stream_header_t), stream.opus_used);
 
-    // Expect roughly SECONDS_TO_TEST / (FRAME_MS / 1000) frames, give or take
+    // Expect roughly SECONDS_TO_TEST / (FRAME_DURATION_MS / 1000) frames, give or take
     // whatever got rounded off when usable_pcm_bytes was truncated to a whole frame count.
-    constexpr uint32_t expected_frames = (SECONDS_TO_TEST * 1000) / FRAME_MS;
+    constexpr uint32_t expected_frames = (SECONDS_TO_TEST * 1000) / FRAME_DURATION_MS;
     TEST_ASSERT_UINT32_WITHIN(1, expected_frames, stream.frame_count);
 
     free_encoded_stream(stream);
@@ -306,7 +308,7 @@ TEST_CASE("Decoder rejects invalid decode arguments", "[opus][decoder]") {
     TEST_ASSERT_TRUE(decoder.has_value());
 
     auto stream = build_encoded_stream();
-    auto source = contiguous_frames_t::create({stream.opus, stream.opus_used});
+    auto source = contiguous_stream_t::create({stream.opus, stream.opus_used});
     TEST_ASSERT_TRUE(source.has_value());
 
     // Empty output buffer
@@ -323,7 +325,7 @@ TEST_CASE("Decoder rejects invalid decode arguments", "[opus][decoder]") {
     free_encoded_stream(stream);
 }
 
-TEST_CASE("Round trip: encoded stream decodes back to the expected PCM length via contiguous_frames_t", "[opus][codec][integration]") {
+TEST_CASE("Round trip: encoded stream decodes back to the expected PCM length via contiguous_stream_t", "[opus][codec][integration]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
     auto stream = build_encoded_stream();
@@ -331,11 +333,11 @@ TEST_CASE("Round trip: encoded stream decodes back to the expected PCM length vi
     auto decoder = stream_t<stream_mode_t::DECODER>::create(get_decoder_config());
     TEST_ASSERT_TRUE(decoder.has_value());
 
-    auto source = contiguous_frames_t::create({stream.opus, stream.opus_used});
+    auto source = contiguous_stream_t::create({stream.opus, stream.opus_used});
     TEST_ASSERT_TRUE(source.has_value());
 
     // Output buffer sized to hold every frame decoded from the source stream.
-    constexpr uint32_t samples_per_frame = (SAMPLE_RATE_HZ * FRAME_MS) / 1'000;
+    constexpr uint32_t samples_per_frame = (SAMPLE_RATE_HZ * FRAME_DURATION_MS) / 1'000;
     const size_t       pcm_out_capacity  = static_cast<size_t>(stream.frame_count) * samples_per_frame * sizeof(int16_t);
     auto*              pcm_out           = static_cast<uint8_t*>(heap_caps_malloc(pcm_out_capacity, MALLOC_CAP_8BIT));
     TEST_ASSERT_NOT_NULL(pcm_out);
@@ -351,26 +353,26 @@ TEST_CASE("Round trip: encoded stream decodes back to the expected PCM length vi
     free_encoded_stream(stream);
 }
 
-TEST_CASE("contiguous_frames_t rejects a truncated or empty buffer", "[opus][stream_source]") {
+TEST_CASE("contiguous_stream_t rejects a truncated or empty buffer", "[opus][stream_source]") {
     std::array<uint8_t, 2> tiny{};
-    auto                   result = contiguous_frames_t::create(tiny);
+    auto                   result = contiguous_stream_t::create(tiny);
     TEST_ASSERT_FALSE(result.has_value());
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_SIZE, result.error());
 }
 
-TEST_CASE("contiguous_frames_t rejects a zeroed-out stream header", "[opus][stream_source]") {
+TEST_CASE("contiguous_stream_t rejects a zeroed-out stream header", "[opus][stream_source]") {
     std::array<uint8_t, sizeof(stream_header_t) + 32> buf{}; // header fields default to 0
 
-    auto result = contiguous_frames_t::create(buf);
+    auto result = contiguous_stream_t::create(buf);
     TEST_ASSERT_FALSE(result.has_value());
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_SIZE, result.error());
 }
 
-TEST_CASE("contiguous_frames_t iterates exactly the frame count in the header, then reports not found", "[opus][stream_source]") {
+TEST_CASE("contiguous_stream_t iterates exactly the frame count in the header, then reports not found", "[opus][stream_source]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
     auto stream = build_encoded_stream();
-    auto source = contiguous_frames_t::create({stream.opus, stream.opus_used});
+    auto source = contiguous_stream_t::create({stream.opus, stream.opus_used});
     TEST_ASSERT_TRUE(source.has_value());
 
     uint32_t counted{};
@@ -394,7 +396,7 @@ TEST_CASE("contiguous_frames_t iterates exactly the frame count in the header, t
     free_encoded_stream(stream);
 }
 
-TEST_CASE("contiguous_frames_t stops rather than trusting a corrupted frame size", "[opus][stream_source]") {
+TEST_CASE("contiguous_stream_t stops rather than trusting a corrupted frame size", "[opus][stream_source]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
     auto stream = build_encoded_stream();
@@ -405,7 +407,7 @@ TEST_CASE("contiguous_frames_t stops rather than trusting a corrupted frame size
     frame_header_t corrupt_header{.size_bytes = 0xFFFF'FFFF, .timestamp_ms = 0};
     memcpy(stream.opus + sizeof(stream_header_t), &corrupt_header, sizeof(frame_header_t));
 
-    auto source = contiguous_frames_t::create({stream.opus, stream.opus_used});
+    auto source = contiguous_stream_t::create({stream.opus, stream.opus_used});
     TEST_ASSERT_TRUE(source.has_value());
 
     auto first = source->next();
@@ -420,13 +422,13 @@ TEST_CASE("contiguous_frames_t stops rather than trusting a corrupted frame size
     free_encoded_stream(stream);
 }
 
-TEST_CASE("file_frames_t reports not found for a nonexistent file", "[opus][stream_source][file]") {
-    auto result = file_frames_t::create("/lfs/this_file_does_not_exist.bin");
+TEST_CASE("file_stream_t reports not found for a nonexistent file", "[opus][stream_source][file]") {
+    auto result = file_stream_t::create("/lfs/this_file_does_not_exist.bin");
     TEST_ASSERT_FALSE(result.has_value());
     TEST_ASSERT_EQUAL(ESP_ERR_NOT_FOUND, result.error());
 }
 
-TEST_CASE("file_frames_t round trips a stream written to disk with the same frame count as contiguous_frames_t",
+TEST_CASE("file_stream_t round trips a stream written to disk with the same frame count as contiguous_stream_t",
           "[opus][stream_source][file]") {
     [[maybe_unused]] codec_fixture_t        fixture{};
     [[maybe_unused]] lfs_test_dir_fixture_t dir_fixture{};
@@ -438,7 +440,7 @@ TEST_CASE("file_frames_t round trips a stream written to disk with the same fram
     TEST_ASSERT_EQUAL(stream.opus_used, fwrite(stream.opus, 1, stream.opus_used, file));
     fclose(file);
 
-    auto file_source = file_frames_t::create(TEST_FILE_PATH);
+    auto file_source = file_stream_t::create(TEST_FILE_PATH);
     TEST_ASSERT_TRUE(file_source.has_value());
 
     uint32_t counted{};
