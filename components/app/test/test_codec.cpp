@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cerrno>
 #include <cstdio>
+#include <memory>
 #include <cstring>
 #include <numbers>
 #include <cstdint>
@@ -28,7 +29,7 @@ namespace {
     constexpr const char* TEST_DIR_PATH  = "/lfs/codec";
     constexpr const char* TEST_FILE_PATH = "/lfs/codec/opus_test_stream.bin";
 
-    consteval auto get_encoder_config() {
+    consteval config_t get_encoder_config() {
         return config_t{
             .bit_rate          = 40'000,
             .complexity        = 4,
@@ -39,7 +40,7 @@ namespace {
         };
     }
 
-    consteval auto get_decoder_config() {
+    consteval config_t get_decoder_config() {
         return config_t{
             .bit_rate          = 40'000,
             .complexity        = 4,
@@ -88,8 +89,8 @@ namespace {
         TEST_ASSERT_NOT_NULL_MESSAGE(buf, "Failed to allocate PCM buffer for opus test");
 
         for (size_t i = 0; i < sample_count; i++) {
-            const auto sample = std::sin(2.0F * pi * freq_hz * static_cast<float>(i) / static_cast<float>(SAMPLE_RATE_HZ));
-            buf[i]            = static_cast<int16_t>(sample * static_cast<float>(INT16_MAX));
+            const float sample = std::sin(2 * pi * freq_hz * static_cast<float>(i) / SAMPLE_RATE_HZ);
+            buf[i]             = static_cast<int16_t>(sample * INT16_MAX);
         }
 
         return buf;
@@ -97,7 +98,7 @@ namespace {
 
     // Encodes SECONDS_TO_TEST worth of sine PCM into a freshly allocated,
     // fully headered opus stream buffer. Caller owns both the PCM and opus
-    // buffers and must heap_caps_free(...) them.
+    // buffers and must free them.
     struct encoded_stream_t {
         int16_t* pcm{};
         uint8_t* opus{};

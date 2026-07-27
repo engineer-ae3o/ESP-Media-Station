@@ -484,7 +484,7 @@ namespace audio::codec::opus {
         // Helpers
         stream_t() = default;
 
-        [[nodiscard]] esp_err_t start(const config_t config)
+        [[nodiscard]] esp_err_t start(const config_t& config)
             requires(stream_mode != stream_mode_t::ANALYZE)
         {
             // Copy config
@@ -651,7 +651,7 @@ namespace audio::codec::opus {
         uint32_t m_bytes_remaining{};
         uint32_t m_largest_opus_frame_size{};
 
-        explicit contiguous_stream_t(stream_header_t stream_header, uint8_t* first_frame)
+        contiguous_stream_t(stream_header_t stream_header, uint8_t* first_frame)
             : m_frame_head(first_frame), m_frames_remaining(stream_header.number_of_frames),
               m_bytes_remaining(stream_header.total_stream_size), m_largest_opus_frame_size(stream_header.largest_opus_frame_size) {
         }
@@ -716,12 +716,14 @@ namespace audio::codec::opus {
             }
 
             bool          success{};
-            file_stream_t instance{stream_header, file, success};
+            file_stream_t stream{stream_header, file, success};
             if (!success) {
+                // cppcheck-suppress resourceLeak
                 return std::unexpected(ESP_ERR_NO_MEM);
             }
 
-            return instance;
+            // cppcheck-suppress resourceLeak
+            return stream;
         }
 
         [[nodiscard]] std::expected<frame_view_t, esp_err_t> next() {
@@ -767,7 +769,7 @@ namespace audio::codec::opus {
 
         std::unique_ptr<uint8_t[]> m_internal_storage;
 
-        explicit file_stream_t(stream_header_t stream_header, FILE* file, bool& success)
+        file_stream_t(stream_header_t stream_header, FILE* file, bool& success)
             : m_file(file), m_frames_remaining(stream_header.number_of_frames),
               m_largest_opus_frame_size(stream_header.largest_opus_frame_size) {
             // Allocate a buffer for the largest opus frame possible

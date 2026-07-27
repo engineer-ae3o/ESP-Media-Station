@@ -4,14 +4,13 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
-#include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "driver/spi_master.h"
 
-#include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_attr.h"
 
-#include "hal/gpio_types.h"
 #include "utils.hpp"
 #include "coord_compute.hpp"
 
@@ -107,7 +106,7 @@ namespace touch {
             // Send the control byte to the XPT2046
             // Start bit is 1, A2, A1 and A0 bits are all 0 (used for channel select), mode bit is 0 for 12 bit ADC resolution,
             // SER/DFR bit is 0 for differential mode, PD1 and PD0 bits are both 0 for auto power down between conversions
-            alignas(4) constexpr uint8_t control_byte = (1U << START_BIT_POS);
+            WORD_ALIGNED_ATTR constexpr uint8_t control_byte = (1U << START_BIT_POS);
 
             spi_transaction_t trans = {
                 .flags            = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL,
@@ -251,7 +250,7 @@ namespace touch {
         constexpr static uint8_t PD1_BIT_POS     = 1; // Power down and internal reference selection
         constexpr static uint8_t PD0_BIT_POS     = 0; // Power down and internal reference selection
 
-        constexpr static auto* TAG = "XPT2046";
+        constexpr static const char* TAG = "XPT2046";
 
         constexpr static uint8_t DEBOUNCE_MS            = 20;
         constexpr static uint8_t NUM_OF_TIMES_TO_SAMPLE = 15;
@@ -308,15 +307,14 @@ namespace touch {
 
         template<channel_t channel>
         [[nodiscard]] std::optional<uint16_t> read_chan() {
-
             // Construct the control byte
-            constexpr uint8_t control_byte = (1U << START_BIT_POS) | (std::to_underlying(channel) << A0_BIT_POS) | (0U << MODE_BIT_POS) |
-                                             (0U << SER_DFR_BIT_POS) | (0U << PD1_BIT_POS) | (0U << PD0_BIT_POS);
+            constexpr uint8_t control_byte = (1U << START_BIT_POS) | (std::to_underlying(channel) << A0_BIT_POS);
 
-            // For conversion, the XPT2046 expects ops of 24 bit cycles
-            // Only the control byte matters for the tx buffer
-            alignas(4) const std::array<uint8_t, MAX_DATA_WRITE_BYTES> tx_buf = {control_byte, 0x00U, 0x00U};
-            alignas(4) std::array<uint8_t, MAX_DATA_WRITE_BYTES>       rx_buf{};
+            // For conversion, the XPT2046 expects operations of 24 bit cycles, so we send 24 bits (3 bytes)
+            // worth of data which gives the XPT2046 enough cycles to process the control byte, start the
+            // conversion and send the result back. Only the control byte matters for the tx buffer.
+            WORD_ALIGNED_ATTR constexpr std::array<uint8_t, MAX_DATA_WRITE_BYTES> tx_buf = {control_byte, 0x00U, 0x00U};
+            WORD_ALIGNED_ATTR std::array<uint8_t, MAX_DATA_WRITE_BYTES> rx_buf{};
 
             spi_transaction_t trans = {
                 .flags            = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL,
@@ -340,7 +338,7 @@ namespace touch {
         }
 
         static void irq_handler(void* arg) {
-            auto& driver = *static_cast<xpt2046_t<init_gpio_isr_service, flags>*>(arg);
+            const auto& driver = *static_cast<xpt2046_t<init_gpio_isr_service, flags>*>(arg);
 
             // Mask interrupts on the irq pin to prevent false positives during conversion
             gpio_intr_disable(driver.m_config.irq_pin);

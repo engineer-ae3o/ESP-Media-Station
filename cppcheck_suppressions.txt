@@ -1,2 +1,9 @@
+missingIncludeSystem
+constParameterCallback
+unusedFunction
+missingInclude
+cstyleCast
+dangerousTypeCast
+uninitMemberVarNoCtor
+constVariablePointer
 useInitializationList
-
