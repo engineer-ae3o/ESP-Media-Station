@@ -36,7 +36,7 @@ namespace audio::codec::opus {
         uint32_t timestamp_ms{};
     };
 
-    enum class stream_mode_t : uint8_t {
+    enum class mode_t : uint8_t {
         ANALYZE = 0,
         ENCODER,
         DECODER,
@@ -74,7 +74,7 @@ namespace audio::codec::opus {
         { source.next() } -> std::same_as<std::expected<frame_view_t, esp_err_t>>;
     };
 
-    template<stream_mode_t stream_mode = stream_mode_t::ANALYZE>
+    template<mode_t stream_mode = mode_t::ANALYZE>
     class stream_t {
     public:
         constexpr static config_t default_config = {
@@ -87,7 +87,7 @@ namespace audio::codec::opus {
         };
 
         [[nodiscard]] static std::expected<stream_t, esp_err_t> create(const config_t& config = default_config)
-            requires(stream_mode != stream_mode_t::ANALYZE)
+            requires(stream_mode != mode_t::ANALYZE)
         {
             stream_t instance{};
             if (auto ret = instance.start(config); ret != ESP_OK) {
@@ -161,7 +161,7 @@ namespace audio::codec::opus {
          * @note This is to be used only in encoder mode.
          */
         [[nodiscard]] uint32_t get_input_frame_size()
-            requires(stream_mode == stream_mode_t::ENCODER)
+            requires(stream_mode == mode_t::ENCODER)
         {
             return static_cast<uint32_t>(m_pcm_frame_size);
         }
@@ -183,7 +183,7 @@ namespace audio::codec::opus {
          */
         [[nodiscard]] std::expected<std::tuple<std::span<uint8_t>, uint32_t, bool>, esp_err_t> encode(std::span<uint8_t> pcm_in,
                                                                                                       std::span<uint8_t> opus_out)
-            requires(stream_mode == stream_mode_t::ENCODER)
+            requires(stream_mode == mode_t::ENCODER)
         {
             if (pcm_in.empty() || pcm_in.data() == nullptr || opus_out.empty() || opus_out.data() == nullptr) {
                 return std::unexpected(ESP_ERR_INVALID_ARG);
@@ -306,7 +306,7 @@ namespace audio::codec::opus {
          * @note This is to be used only in encoder mode.
          */
         [[nodiscard]] std::expected<stream_header_t, esp_err_t> get_stream_header()
-            requires(stream_mode == stream_mode_t::ENCODER)
+            requires(stream_mode == mode_t::ENCODER)
         {
             return stream_header_t{m_num_of_frames, m_total_stream_size, m_largest_opus_frame_size};
         }
@@ -324,7 +324,7 @@ namespace audio::codec::opus {
          */
         [[nodiscard]] std::expected<std::pair<std::span<uint8_t>, bool>, esp_err_t> decode(stream_source_t auto& opus_in,
                                                                                            std::span<uint8_t>    pcm_out)
-            requires(stream_mode == stream_mode_t::DECODER)
+            requires(stream_mode == mode_t::DECODER)
         {
             if (pcm_out.empty() || pcm_out.data() == nullptr) {
                 return std::unexpected(ESP_ERR_INVALID_ARG);
@@ -412,7 +412,7 @@ namespace audio::codec::opus {
          * @note This is to be used only in analyze mode.
          */
         [[nodiscard]] static std::expected<stream_header_t, esp_err_t> get_stream_header(std::span<const uint8_t> opus_stream)
-            requires(stream_mode == stream_mode_t::ANALYZE)
+            requires(stream_mode == mode_t::ANALYZE)
         {
             if (opus_stream.empty() || opus_stream.data() == nullptr) {
                 return std::unexpected(ESP_ERR_INVALID_ARG);
@@ -438,7 +438,7 @@ namespace audio::codec::opus {
          * @note This is to be used only in analyze mode.
          */
         [[nodiscard]] static std::expected<frame_header_t, esp_err_t> get_frame_header(std::span<const uint8_t> opus_frame)
-            requires(stream_mode == stream_mode_t::ANALYZE)
+            requires(stream_mode == mode_t::ANALYZE)
         {
             if (opus_frame.empty() || opus_frame.data() == nullptr) {
                 return std::unexpected(ESP_ERR_INVALID_ARG);
@@ -455,7 +455,7 @@ namespace audio::codec::opus {
         }
 
     private:
-        // None of the member variables are used in stream_mode_t::ANALYZE mode
+        // None of the member variables are used in mode_t::ANALYZE mode
         config_t m_config{};
 
         esp_audio_enc_handle_t m_encoder{};
@@ -485,12 +485,12 @@ namespace audio::codec::opus {
         stream_t() = default;
 
         [[nodiscard]] esp_err_t start(const config_t& config)
-            requires(stream_mode != stream_mode_t::ANALYZE)
+            requires(stream_mode != mode_t::ANALYZE)
         {
-            // Copy config
+            // Save config
             m_config = config;
 
-            if constexpr (stream_mode == stream_mode_t::ENCODER) {
+            if constexpr (stream_mode == mode_t::ENCODER) {
                 // Configure the opus encoder
                 const auto* duration_type = std::get_if<esp_opus_enc_frame_duration_t>(&m_config.duration_type);
                 if (duration_type == nullptr) {
@@ -541,7 +541,7 @@ namespace audio::codec::opus {
                     return ESP_ERR_INVALID_SIZE;
                 }
 
-            } else if constexpr (stream_mode == stream_mode_t::DECODER) {
+            } else if constexpr (stream_mode == mode_t::DECODER) {
                 // Configure the opus decoder
                 const auto* duration_type = std::get_if<esp_opus_dec_frame_duration_t>(&m_config.duration_type);
                 if (duration_type == nullptr) {
@@ -571,14 +571,14 @@ namespace audio::codec::opus {
         }
 
         void end()
-            requires(stream_mode != stream_mode_t::ANALYZE)
+            requires(stream_mode != mode_t::ANALYZE)
         {
-            if constexpr (stream_mode == stream_mode_t::ENCODER) {
+            if constexpr (stream_mode == mode_t::ENCODER) {
                 if (m_encoder) {
                     esp_audio_enc_close(m_encoder);
                     m_encoder = nullptr;
                 }
-            } else if constexpr (stream_mode == stream_mode_t::DECODER) {
+            } else if constexpr (stream_mode == mode_t::DECODER) {
                 if (m_decoder) {
                     esp_audio_dec_close(m_decoder);
                     m_decoder = nullptr;

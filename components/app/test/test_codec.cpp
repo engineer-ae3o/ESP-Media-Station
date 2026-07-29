@@ -1,8 +1,8 @@
 #include "unity.h"
 
-#include "esp_heap_caps.h"
-
 #include "codec.hpp"
+
+#include "esp_heap_caps.h"
 
 #include <array>
 #include <cmath>
@@ -12,16 +12,17 @@
 #include <cstring>
 #include <numbers>
 #include <cstdint>
-#include <unistd.h>
 #include <sys/stat.h>
 
 namespace {
 
     using namespace audio::codec::opus;
+    using namespace audio::codec;
 
-    constexpr int SAMPLE_RATE_HZ    = 48'000;
-    constexpr int FRAME_DURATION_MS = 20;
-    constexpr int SECONDS_TO_TEST   = 2;
+    constexpr uint32_t SAMPLE_RATE_HZ     = 48'000;
+    constexpr uint32_t OUT_BUF_SIZE_BYTES = 4096;
+    constexpr uint32_t FRAME_DURATION_MS  = 20;
+    constexpr uint32_t SECONDS_TO_TEST    = 5;
 
     // LittleFS is mounted at /lfs. Tests that touch disk get their own
     // subdirectory so they don't scatter files across the mount, and that
@@ -81,14 +82,14 @@ namespace {
         codec_fixture_t& operator=(codec_fixture_t&&)      = delete;
     };
 
-    int16_t* make_sine_pcm(size_t sample_count) {
+    std::unique_ptr<int16_t[]> make_sine_pcm(uint32_t sample_count) {
         constexpr float freq_hz = 440;
         constexpr float pi      = std::numbers::pi_v<float>;
 
-        auto* buf = static_cast<int16_t*>(heap_caps_malloc(sample_count * sizeof(int16_t), MALLOC_CAP_8BIT));
+        std::unique_ptr<int16_t[]> buf(new (std::nothrow) int16_t[sample_count]);
         TEST_ASSERT_NOT_NULL_MESSAGE(buf, "Failed to allocate PCM buffer for opus test");
 
-        for (size_t i = 0; i < sample_count; i++) {
+        for (uint32_t i = 0; i < sample_count; i++) {
             const float sample = std::sin(2 * pi * freq_hz * static_cast<float>(i) / SAMPLE_RATE_HZ);
             buf[i]             = static_cast<int16_t>(sample * INT16_MAX);
         }
@@ -97,38 +98,40 @@ namespace {
     }
 
     // Encodes SECONDS_TO_TEST worth of sine PCM into a freshly allocated,
-    // fully headered opus stream buffer. Caller owns both the PCM and opus
-    // buffers and must free them.
+    // fully headered opus stream buffer.
     struct encoded_stream_t {
-        int16_t* pcm{};
-        uint8_t* opus{};
-        size_t   opus_capacity{};
-        size_t   opus_used{};
+        std::unique_ptr<int16_t[]> pcm;  // 16 bit PCM data
+        std::unique_ptr<uint8_t[]> opus; // Just a buffer of raw bytes
+
+        uint32_t opus_capacity{};
+        uint32_t opus_used{};
         uint32_t frame_count{};
     };
 
     encoded_stream_t build_encoded_stream() {
-        auto encoder = stream_t<stream_mode_t::ENCODER>::create(get_encoder_config());
+        auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_encoder_config());
         TEST_ASSERT_TRUE_MESSAGE(encoder.has_value(), "Failed to create encoder while building test fixture stream");
 
-        const auto pcm_frame_size  = encoder->get_input_frame_size();
-        const auto total_samples   = static_cast<size_t>(SAMPLE_RATE_HZ) * SECONDS_TO_TEST;
-        const auto total_pcm_bytes = total_samples * sizeof(int16_t);
+        constexpr uint32_t total_samples   = SAMPLE_RATE_HZ * SECONDS_TO_TEST;
+        constexpr uint32_t total_pcm_bytes = total_samples * sizeof(int16_t); // 16 bit PCM
+        const uint32_t     pcm_frame_size  = encoder->get_input_frame_size();
 
         // Round down to a whole number of input frames, same constraint encode(...) enforces.
-        const auto usable_pcm_bytes = (total_pcm_bytes / pcm_frame_size) * pcm_frame_size;
+        const uint32_t usable_pcm_bytes = (total_pcm_bytes / pcm_frame_size) * pcm_frame_size;
 
         encoded_stream_t result{};
+
         result.pcm           = make_sine_pcm(usable_pcm_bytes / sizeof(int16_t));
-        result.opus_capacity = usable_pcm_bytes + (1024 * 1024 * sizeof(frame_header_t)); // generous headroom
-        result.opus          = static_cast<uint8_t*>(heap_caps_malloc(result.opus_capacity, MALLOC_CAP_8BIT));
+        result.opus_capacity = usable_pcm_bytes + (1024 * 1024 * sizeof(frame_header_t)); // Generous headroom
+
+        result.opus.reset((new (std::nothrow) uint8_t[result.opus_capacity]));
         TEST_ASSERT_NOT_NULL_MESSAGE(result.opus, "Failed to allocate opus output buffer for test fixture stream");
 
-        auto encode_result =
-            encoder->encode({reinterpret_cast<uint8_t*>(result.pcm), usable_pcm_bytes}, {result.opus, result.opus_capacity});
-        TEST_ASSERT_TRUE_MESSAGE(encode_result.has_value(), "Encoding the fixture stream failed");
+        auto ret =
+            encoder->encode({reinterpret_cast<uint8_t*>(result.pcm.get()), usable_pcm_bytes}, {result.opus.get(), result.opus_capacity});
+        TEST_ASSERT_TRUE_MESSAGE(ret.has_value(), "Encoding the fixture stream failed");
 
-        const auto& [written, consumed, complete] = encode_result.value();
+        const auto& [written, consumed, complete] = ret.value();
         TEST_ASSERT_TRUE_MESSAGE(complete, "Fixture stream encode reported partial success unexpectedly");
         TEST_ASSERT_EQUAL_MESSAGE(usable_pcm_bytes, consumed, "Fixture stream did not consume the full PCM buffer");
 
@@ -136,17 +139,12 @@ namespace {
         TEST_ASSERT_TRUE_MESSAGE(header.has_value(), "Failed to retrieve stream header for fixture stream");
 
         // Stamp the finalized header at the head of the stream, as documented on get_stream_header(...).
-        memcpy(result.opus, &header.value(), sizeof(stream_header_t));
+        memcpy(result.opus.get(), &header.value(), sizeof(stream_header_t));
 
         result.opus_used   = written.size_bytes();
         result.frame_count = header->number_of_frames;
-        return result;
-    }
 
-    void free_encoded_stream(encoded_stream_t& stream) {
-        heap_caps_free(stream.pcm);
-        heap_caps_free(stream.opus);
-        stream = {};
+        return result;
     }
 
     // Creates TEST_DIR_PATH on construction and removes it (along with any
@@ -175,7 +173,7 @@ namespace {
 TEST_CASE("Encoder create rejects a mismatched duration_type", "[opus][encoder]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
-    auto encoder = stream_t<stream_mode_t::ENCODER>::create(get_mismatched_encoder_config());
+    auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_mismatched_encoder_config());
     TEST_ASSERT_FALSE(encoder.has_value());
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, encoder.error());
 }
@@ -183,7 +181,7 @@ TEST_CASE("Encoder create rejects a mismatched duration_type", "[opus][encoder]"
 TEST_CASE("Decoder create rejects a mismatched duration_type", "[opus][decoder]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
-    auto decoder = stream_t<stream_mode_t::DECODER>::create(get_mismatched_decoder_config());
+    auto decoder = stream_t<opus::mode_t::DECODER>::create(get_mismatched_decoder_config());
     TEST_ASSERT_FALSE(decoder.has_value());
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_ARG, decoder.error());
 }
@@ -191,7 +189,7 @@ TEST_CASE("Decoder create rejects a mismatched duration_type", "[opus][decoder]"
 TEST_CASE("Encoder initializes with a valid config and reports a usable frame size", "[opus][encoder]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
-    auto encoder = stream_t<stream_mode_t::ENCODER>::create(get_encoder_config());
+    auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_encoder_config());
     TEST_ASSERT_TRUE(encoder.has_value());
     TEST_ASSERT_GREATER_THAN_UINT32(0, encoder->get_input_frame_size());
 }
@@ -203,17 +201,16 @@ TEST_CASE("Encoder is cleaned up correctly by the destructor mid-stream", "[opus
     [[maybe_unused]] codec_fixture_t fixture{};
 
     {
-        auto encoder = stream_t<stream_mode_t::ENCODER>::create(get_encoder_config());
+        auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_encoder_config());
         TEST_ASSERT_TRUE(encoder.has_value());
 
-        auto* pcm = make_sine_pcm(encoder->get_input_frame_size() / sizeof(int16_t));
-        auto* out = static_cast<uint8_t*>(heap_caps_malloc(4096, MALLOC_CAP_8BIT));
+        auto                       pcm = make_sine_pcm(encoder->get_input_frame_size() / sizeof(int16_t));
+        std::unique_ptr<uint8_t[]> out(new (std::nothrow) uint8_t[OUT_BUF_SIZE_BYTES]);
         TEST_ASSERT_NOT_NULL(out);
 
-        [[maybe_unused]] auto ret = encoder->encode({reinterpret_cast<uint8_t*>(pcm), encoder->get_input_frame_size()}, {out, 4096});
+        [[maybe_unused]] auto ret =
+            encoder->encode({reinterpret_cast<uint8_t*>(pcm.get()), encoder->get_input_frame_size()}, {out.get(), OUT_BUF_SIZE_BYTES});
 
-        heap_caps_free(pcm);
-        heap_caps_free(out);
     } // ~stream_t() runs here
 
     TEST_PASS();
@@ -222,7 +219,7 @@ TEST_CASE("Encoder is cleaned up correctly by the destructor mid-stream", "[opus
 TEST_CASE("Encoder rejects invalid encode arguments", "[opus][encoder]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
-    auto encoder = stream_t<stream_mode_t::ENCODER>::create(get_encoder_config());
+    auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_encoder_config());
     TEST_ASSERT_TRUE(encoder.has_value());
 
     std::array<uint8_t, 4096> out{};
@@ -270,27 +267,25 @@ TEST_CASE("Encoding a full buffer produces a header matching the encoded frames"
     // whatever got rounded off when usable_pcm_bytes was truncated to a whole frame count.
     constexpr uint32_t expected_frames = (SECONDS_TO_TEST * 1000) / FRAME_DURATION_MS;
     TEST_ASSERT_UINT32_WITHIN(1, expected_frames, stream.frame_count);
-
-    free_encoded_stream(stream);
 }
 
 TEST_CASE("Encoder reports partial success when the output buffer is too small to finish", "[opus][encoder]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
-    auto encoder = stream_t<stream_mode_t::ENCODER>::create(get_encoder_config());
+    auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_encoder_config());
     TEST_ASSERT_TRUE(encoder.has_value());
 
-    const auto frame_size  = encoder->get_input_frame_size();
-    const auto frame_count = 20U; // Enough frames that a tiny output buffer can't fit them all
-    const auto pcm_bytes   = static_cast<size_t>(frame_size) * frame_count;
-    auto*      pcm         = make_sine_pcm(pcm_bytes / sizeof(int16_t));
+    const uint32_t frame_size  = encoder->get_input_frame_size();
+    const uint32_t frame_count = 20; // Enough frames that a tiny output buffer can't fit them all
+    const uint32_t pcm_bytes   = frame_size * frame_count;
+    auto           pcm         = make_sine_pcm(pcm_bytes / sizeof(int16_t));
 
     // Deliberately too small: room for the stream header plus only a couple of frames.
-    const size_t small_out_sz = sizeof(stream_header_t) + (sizeof(frame_header_t) * 2) + 64;
-    auto*        small_out    = static_cast<uint8_t*>(heap_caps_malloc(small_out_sz, MALLOC_CAP_8BIT));
+    const uint32_t small_out_sz = sizeof(stream_header_t) + (sizeof(frame_header_t) * 2) + 64;
+    auto*          small_out    = static_cast<uint8_t*>(heap_caps_malloc(small_out_sz, MALLOC_CAP_8BIT));
     TEST_ASSERT_NOT_NULL(small_out);
 
-    auto result = encoder->encode({reinterpret_cast<uint8_t*>(pcm), pcm_bytes}, {small_out, small_out_sz});
+    auto result = encoder->encode({reinterpret_cast<uint8_t*>(pcm.get()), pcm_bytes}, {small_out, small_out_sz});
     TEST_ASSERT_TRUE_MESSAGE(result.has_value(), "Partial encode should still return a value, not an error");
 
     const auto& [written, consumed, complete] = result.value();
@@ -298,18 +293,17 @@ TEST_CASE("Encoder reports partial success when the output buffer is too small t
     TEST_ASSERT_LESS_THAN_UINT32(pcm_bytes, consumed);
     TEST_ASSERT_GREATER_THAN_UINT32(0, consumed);
 
-    heap_caps_free(pcm);
     heap_caps_free(small_out);
 }
 
 TEST_CASE("Decoder rejects invalid decode arguments", "[opus][decoder]") {
     [[maybe_unused]] codec_fixture_t fixture{};
 
-    auto decoder = stream_t<stream_mode_t::DECODER>::create(get_decoder_config());
+    auto decoder = stream_t<opus::mode_t::DECODER>::create(get_decoder_config());
     TEST_ASSERT_TRUE(decoder.has_value());
 
     auto stream = build_encoded_stream();
-    auto source = contiguous_stream_t::create({stream.opus, stream.opus_used});
+    auto source = contiguous_stream_t::create({stream.opus.get(), stream.opus_used});
     TEST_ASSERT_TRUE(source.has_value());
 
     // Empty output buffer
@@ -322,8 +316,6 @@ TEST_CASE("Decoder rejects invalid decode arguments", "[opus][decoder]") {
     auto                   tiny_result = decoder->decode(*source, tiny_out);
     TEST_ASSERT_FALSE(tiny_result.has_value());
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_SIZE, tiny_result.error());
-
-    free_encoded_stream(stream);
 }
 
 TEST_CASE("Round trip: encoded stream decodes back to the expected PCM length via contiguous_stream_t", "[opus][codec][integration]") {
@@ -331,15 +323,15 @@ TEST_CASE("Round trip: encoded stream decodes back to the expected PCM length vi
 
     auto stream = build_encoded_stream();
 
-    auto decoder = stream_t<stream_mode_t::DECODER>::create(get_decoder_config());
+    auto decoder = stream_t<opus::mode_t::DECODER>::create(get_decoder_config());
     TEST_ASSERT_TRUE(decoder.has_value());
 
-    auto source = contiguous_stream_t::create({stream.opus, stream.opus_used});
+    auto source = contiguous_stream_t::create({stream.opus.get(), stream.opus_used});
     TEST_ASSERT_TRUE(source.has_value());
 
     // Output buffer sized to hold every frame decoded from the source stream.
     constexpr uint32_t samples_per_frame = (SAMPLE_RATE_HZ * FRAME_DURATION_MS) / 1'000;
-    const size_t       pcm_out_capacity  = static_cast<size_t>(stream.frame_count) * samples_per_frame * sizeof(int16_t);
+    const uint32_t     pcm_out_capacity  = stream.frame_count * samples_per_frame * sizeof(int16_t);
     auto*              pcm_out           = static_cast<uint8_t*>(heap_caps_malloc(pcm_out_capacity, MALLOC_CAP_8BIT));
     TEST_ASSERT_NOT_NULL(pcm_out);
 
@@ -351,7 +343,6 @@ TEST_CASE("Round trip: encoded stream decodes back to the expected PCM length vi
     TEST_ASSERT_EQUAL(pcm_out_capacity, decoded.size_bytes());
 
     heap_caps_free(pcm_out);
-    free_encoded_stream(stream);
 }
 
 TEST_CASE("contiguous_stream_t rejects a truncated or empty buffer", "[opus][stream_source]") {
@@ -373,7 +364,7 @@ TEST_CASE("contiguous_stream_t iterates exactly the frame count in the header, t
     [[maybe_unused]] codec_fixture_t fixture{};
 
     auto stream = build_encoded_stream();
-    auto source = contiguous_stream_t::create({stream.opus, stream.opus_used});
+    auto source = contiguous_stream_t::create({stream.opus.get(), stream.opus_used});
     TEST_ASSERT_TRUE(source.has_value());
 
     uint32_t counted{};
@@ -393,8 +384,6 @@ TEST_CASE("contiguous_stream_t iterates exactly the frame count in the header, t
     auto again = source->next();
     TEST_ASSERT_FALSE(again.has_value());
     TEST_ASSERT_EQUAL(ESP_ERR_NOT_FOUND, again.error());
-
-    free_encoded_stream(stream);
 }
 
 TEST_CASE("contiguous_stream_t stops rather than trusting a corrupted frame size", "[opus][stream_source]") {
@@ -406,9 +395,9 @@ TEST_CASE("contiguous_stream_t stops rather than trusting a corrupted frame size
     // to something impossibly large. next() should refuse to trust it and bail out cleanly
     // instead of walking the frame head off into unrelated memory.
     frame_header_t corrupt_header{.size_bytes = 0xFFFF'FFFF, .timestamp_ms = 0};
-    memcpy(stream.opus + sizeof(stream_header_t), &corrupt_header, sizeof(frame_header_t));
+    memcpy(stream.opus.get() + sizeof(stream_header_t), &corrupt_header, sizeof(frame_header_t));
 
-    auto source = contiguous_stream_t::create({stream.opus, stream.opus_used});
+    auto source = contiguous_stream_t::create({stream.opus.get(), stream.opus_used});
     TEST_ASSERT_TRUE(source.has_value());
 
     auto first = source->next();
@@ -419,8 +408,6 @@ TEST_CASE("contiguous_stream_t stops rather than trusting a corrupted frame size
     auto second = source->next();
     TEST_ASSERT_FALSE(second.has_value());
     TEST_ASSERT_EQUAL(ESP_ERR_NOT_FOUND, second.error());
-
-    free_encoded_stream(stream);
 }
 
 TEST_CASE("file_stream_t reports not found for a nonexistent file", "[opus][stream_source][file]") {
@@ -438,7 +425,7 @@ TEST_CASE("file_stream_t round trips a stream written to disk with the same fram
 
     FILE* file = fopen(TEST_FILE_PATH, "wb");
     TEST_ASSERT_NOT_NULL_MESSAGE(file, "Failed to open test file for writing under /lfs/codec");
-    TEST_ASSERT_EQUAL(stream.opus_used, fwrite(stream.opus, 1, stream.opus_used, file));
+    TEST_ASSERT_EQUAL(stream.opus_used, fwrite(stream.opus.get(), 1, stream.opus_used, file));
     fclose(file);
 
     auto file_source = file_stream_t::create(TEST_FILE_PATH);
@@ -456,12 +443,11 @@ TEST_CASE("file_stream_t round trips a stream written to disk with the same fram
 
     TEST_ASSERT_EQUAL_UINT32(stream.frame_count, counted);
 
-    free_encoded_stream(stream);
     // dir_fixture's destructor removes opus_test_stream.bin and rmdir's /lfs/codec here
 }
 
 TEST_CASE("ANALYZE mode rejects invalid or too-small buffers", "[opus][analyze]") {
-    // stream_t<> defaults to stream_mode_t::ANALYZE; its header accessors are
+    // stream_t<> defaults to opus::mode_t::ANALYZE; its header accessors are
     // static and require neither an encoder nor a decoder to be spun up.
     std::array<uint8_t, 2> tiny{};
 
@@ -487,16 +473,15 @@ TEST_CASE("ANALYZE mode parses stream and frame headers from a real encoded stre
 
     auto stream = build_encoded_stream();
 
-    auto stream_header = stream_t<>::get_stream_header({stream.opus, stream.opus_used});
+    auto stream_header = stream_t<>::get_stream_header({stream.opus.get(), stream.opus_used});
     TEST_ASSERT_TRUE(stream_header.has_value());
     TEST_ASSERT_EQUAL_UINT32(stream.frame_count, stream_header->number_of_frames);
     TEST_ASSERT_EQUAL_UINT32(stream.opus_used, stream_header->total_stream_size);
 
     // First frame header sits immediately after the stream header
-    auto frame_header = stream_t<>::get_frame_header({stream.opus + sizeof(stream_header_t), stream.opus_used - sizeof(stream_header_t)});
+    auto frame_header =
+        stream_t<>::get_frame_header({stream.opus.get() + sizeof(stream_header_t), stream.opus_used - sizeof(stream_header_t)});
     TEST_ASSERT_TRUE(frame_header.has_value());
     TEST_ASSERT_GREATER_THAN_UINT32(0, frame_header->size_bytes);
     TEST_ASSERT_LESS_OR_EQUAL_UINT32(stream_header->largest_opus_frame_size, frame_header->size_bytes);
-
-    free_encoded_stream(stream);
 }

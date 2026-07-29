@@ -104,7 +104,7 @@ namespace audio::pipeline {
         void record_task(void* arg) {
 
             FILE* record_file = nullptr;
-            codec::opus::stream_t<codec::opus::stream_mode_t::ANALYZE>::init();
+            codec::opus::stream_t<codec::opus::mode_t::ANALYZE>::init();
 
             while (g_shutdown_requested.load(std::memory_order_acquire)) {
                 record_t event{};
@@ -128,7 +128,7 @@ namespace audio::pipeline {
                 }
             }
 
-            codec::opus::stream_t<codec::opus::stream_mode_t::ANALYZE>::deinit();
+            codec::opus::stream_t<codec::opus::mode_t::ANALYZE>::deinit();
             vTaskDelete(nullptr);
         }
 

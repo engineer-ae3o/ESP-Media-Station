@@ -1,9 +1,11 @@
-missingIncludeSystem
 constParameterCallback
+useInitializationList
+uninitMemberVarNoCtor
+missingIncludeSystem
+unmatchedSuppression
+constVariablePointer
+dangerousTypeCast
 unusedFunction
 missingInclude
+syntaxError
 cstyleCast
-dangerousTypeCast
-uninitMemberVarNoCtor
-constVariablePointer
-useInitializationList
