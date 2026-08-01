@@ -66,7 +66,7 @@ namespace {
         return cfg;
     }
 
-    // Registers/unregisters the codec library once per test.
+    // Registers/unregisters the codec library per test.
     struct codec_fixture_t {
         codec_fixture_t() {
             stream_t<>::init();
@@ -82,6 +82,15 @@ namespace {
         codec_fixture_t& operator=(codec_fixture_t&&)      = delete;
     };
 
+    /**
+     * @brief Takes in the number of 16 bit PCM samples to generate, allocates a buffer
+     *        for it, generates a 440Hz sine wave in the buffer, and transfers ownership
+     *        of the buffer to the caller. 
+     * 
+     * @param sample_count Number of 16 bit PCM samples to geberate.
+     * 
+     * @return The buffer holding the PCM.
+     */
     std::unique_ptr<int16_t[]> make_sine_pcm(uint32_t sample_count) {
         constexpr float freq_hz = 440;
         constexpr float pi      = std::numbers::pi_v<float>;
@@ -112,28 +121,33 @@ namespace {
         auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_encoder_config());
         TEST_ASSERT_TRUE_MESSAGE(encoder.has_value(), "Failed to create encoder while building test fixture stream");
 
-        constexpr uint32_t total_samples   = SAMPLE_RATE_HZ * SECONDS_TO_TEST;
-        constexpr uint32_t total_pcm_bytes = total_samples * sizeof(int16_t); // 16 bit PCM
-        const uint32_t     pcm_frame_size  = encoder->get_input_frame_size();
+        // Get size of buffer we have to allocate to store the PCM data as well the number of PCM samples
+        constexpr uint32_t total_samples_count = SAMPLE_RATE_HZ * SECONDS_TO_TEST;
+        constexpr uint32_t pcm_buf_size_bytes  = total_samples_count * sizeof(int16_t); // 16 bit PCM
 
-        // Round down to a whole number of input frames, same constraint encode(...) enforces.
-        const uint32_t usable_pcm_bytes = (total_pcm_bytes / pcm_frame_size) * pcm_frame_size;
+        // Manually calculate the PCM frame size
+        constexpr uint32_t SAMPLES_PER_FRAME     = get_encoder_config().sample_rate * get_encoder_config().frame_duration_ms / 1'000;
+        constexpr uint32_t PCM_FRAME_SIZE_ACTUAL = SAMPLES_PER_FRAME * (ESP_AUDIO_BIT16 / 8) * 1; // 1 channel
+
+        // Check that the manually calculated PCM input frame size matches the one from
+        TEST_ASSERT_EQUAL(PCM_FRAME_SIZE_ACTUAL, encoder->get_input_frame_size());
 
         encoded_stream_t result{};
 
-        result.pcm           = make_sine_pcm(usable_pcm_bytes / sizeof(int16_t));
-        result.opus_capacity = usable_pcm_bytes + (1024 * 1024 * sizeof(frame_header_t)); // Generous headroom
+        //
+        result.pcm           = make_sine_pcm(total_samples_count);
+        result.opus_capacity = pcm_buf_size_bytes + (1024 * 1024 * sizeof(frame_header_t)); // Generous headroom
 
         result.opus.reset((new (std::nothrow) uint8_t[result.opus_capacity]));
         TEST_ASSERT_NOT_NULL_MESSAGE(result.opus, "Failed to allocate opus output buffer for test fixture stream");
 
         auto ret =
-            encoder->encode({reinterpret_cast<uint8_t*>(result.pcm.get()), usable_pcm_bytes}, {result.opus.get(), result.opus_capacity});
+            encoder->encode({reinterpret_cast<uint8_t*>(result.pcm.get()), pcm_buf_size_bytes}, {result.opus.get(), result.opus_capacity});
         TEST_ASSERT_TRUE_MESSAGE(ret.has_value(), "Encoding the fixture stream failed");
 
         const auto& [written, consumed, complete] = ret.value();
         TEST_ASSERT_TRUE_MESSAGE(complete, "Fixture stream encode reported partial success unexpectedly");
-        TEST_ASSERT_EQUAL_MESSAGE(usable_pcm_bytes, consumed, "Fixture stream did not consume the full PCM buffer");
+        TEST_ASSERT_EQUAL_MESSAGE(pcm_buf_size_bytes, consumed, "Fixture stream did not consume the full PCM buffer");
 
         const auto header = encoder->get_stream_header();
         TEST_ASSERT_TRUE_MESSAGE(header.has_value(), "Failed to retrieve stream header for fixture stream");
@@ -204,7 +218,8 @@ TEST_CASE("Encoder is cleaned up correctly by the destructor mid-stream", "[opus
         auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_encoder_config());
         TEST_ASSERT_TRUE(encoder.has_value());
 
-        auto                       pcm = make_sine_pcm(encoder->get_input_frame_size() / sizeof(int16_t));
+        auto pcm = make_sine_pcm(encoder->get_input_frame_size() / sizeof(int16_t));
+
         std::unique_ptr<uint8_t[]> out(new (std::nothrow) uint8_t[OUT_BUF_SIZE_BYTES]);
         TEST_ASSERT_NOT_NULL(out);
 

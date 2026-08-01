@@ -11,12 +11,14 @@
 
 namespace {
 
-    consteval auto get_test_config(bool use_right_chan = false) {
-        return audio::mic::config_t{
+    using namespace audio::mic;
+
+    consteval config_t get_test_config(bool use_right_chan = false) {
+        return {
             .use_right_chan = use_right_chan,
             .error_cb =
                 [](esp_err_t err) {
-                    ESP_LOGE("TEST", "Error occurred during INMP test: %s", esp_err_to_name(err));
+                    ESP_LOGE("Unity", "Error occurred during INMP441 test: %s", esp_err_to_name(err));
                     TEST_FAIL();
                 },
             .chip_en_pin = config::INMP_CHIPEN_PIN,
@@ -29,8 +31,8 @@ namespace {
 
     // The streaming task fills buffers on its own schedule; poll instead of
     // assuming a buffer is ready immediately after start_stream().
-    [[nodiscard]] std::expected<std::span<const int32_t, audio::mic::inmp441_t::RECV_BUF_SIZE_ELEMENTS>, esp_err_t>
-    wait_for_filled_buffer(audio::mic::inmp441_t& mic, uint32_t timeout_ms = 2000) {
+    [[nodiscard]] std::expected<std::span<const int32_t, inmp441_t::RECV_BUF_SIZE_ELEMENTS>, esp_err_t>
+    wait_for_filled_buffer(inmp441_t& mic, uint32_t timeout_ms = 2'000) {
         constexpr uint32_t poll_interval_ms = 10;
         uint32_t           waited_ms{};
 
@@ -49,11 +51,10 @@ namespace {
 } // namespace
 
 TEST_CASE("Initialization and deinitialization", "[inmp441][i2s]") {
-    audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config();
+    inmp441_t mic{};
 
-    TEST_ESP_OK(mic.init(cfg));
-    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.init(cfg));
+    TEST_ESP_OK(mic.init(get_test_config()));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.init(get_test_config()));
 
     TEST_ESP_OK(mic.deinit());
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.deinit());
@@ -65,10 +66,9 @@ TEST_CASE("Destructor cleans up correctly while streaming", "[inmp441][i2s]") {
     // explicitly. This is the part of the driver most likely to deadlock
     // if the shutdown synchronization is wrong, so it gets its own test
     // rather than relying on every other test's teardown to catch it.
-    const auto cfg = get_test_config();
     {
-        audio::mic::inmp441_t mic{};
-        TEST_ESP_OK(mic.init(cfg));
+        inmp441_t mic{};
+        TEST_ESP_OK(mic.init(get_test_config()));
         TEST_ESP_OK(mic.start_stream());
         vTaskDelay(pdMS_TO_TICKS(20)); // Let the state machine get into a read
     } // ~inmp441_t() runs here; test hangs if cleanup's task notify handshake is broken
@@ -77,13 +77,12 @@ TEST_CASE("Destructor cleans up correctly while streaming", "[inmp441][i2s]") {
 }
 
 TEST_CASE("Enable/disable rejects invalid transitions", "[inmp441][i2s]") {
-    audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config();
+    inmp441_t mic{};
 
     // Not initialized yet
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.enable(false));
 
-    TEST_ESP_OK(mic.init(cfg)); // init() leaves the mic enabled
+    TEST_ESP_OK(mic.init(get_test_config())); // init() leaves the mic enabled
 
     // Already enabled. Should return invalid state
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.enable(true));
@@ -98,10 +97,9 @@ TEST_CASE("Enable/disable rejects invalid transitions", "[inmp441][i2s]") {
 }
 
 TEST_CASE("Cannot disable while streaming", "[inmp441][i2s]") {
-    audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config();
+    inmp441_t mic{};
 
-    TEST_ESP_OK(mic.init(cfg));
+    TEST_ESP_OK(mic.init(get_test_config()));
     TEST_ESP_OK(mic.start_stream());
 
     // Cannot disable while streaming is still on going
@@ -113,14 +111,13 @@ TEST_CASE("Cannot disable while streaming", "[inmp441][i2s]") {
 }
 
 TEST_CASE("start_stream/stop_stream rejects invalid transitions", "[inmp441][i2s]") {
-    audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config();
+    inmp441_t mic{};
 
     // Not initialized
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.start_stream());
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.stop_stream());
 
-    TEST_ESP_OK(mic.init(cfg));
+    TEST_ESP_OK(mic.init(get_test_config()));
 
     // Not streaming yet
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.stop_stream());
@@ -137,8 +134,7 @@ TEST_CASE("start_stream/stop_stream rejects invalid transitions", "[inmp441][i2s
 }
 
 TEST_CASE("get_filled_buffer and return_buffer reject bad state and bad pointers", "[inmp441][i2s]") {
-    audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config();
+    inmp441_t mic{};
 
     // Not initialized
     {
@@ -148,7 +144,7 @@ TEST_CASE("get_filled_buffer and return_buffer reject bad state and bad pointers
     }
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, mic.return_buffer(nullptr));
 
-    TEST_ESP_OK(mic.init(cfg));
+    TEST_ESP_OK(mic.init(get_test_config()));
 
     // Initialized, streaming not started: nothing filled yet
     {
@@ -165,18 +161,17 @@ TEST_CASE("get_filled_buffer and return_buffer reject bad state and bad pointers
 }
 
 TEST_CASE("Streaming produces correctly sized buffers", "[inmp441][i2s]") {
-    audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config();
+    inmp441_t mic{};
 
-    TEST_ESP_OK(mic.init(cfg));
+    TEST_ESP_OK(mic.init(get_test_config()));
     TEST_ESP_OK(mic.start_stream());
 
     auto result = wait_for_filled_buffer(mic);
     TEST_ASSERT_TRUE_MESSAGE(result.has_value(), "No buffer filled within timeout");
 
     const auto buf = result.value();
-    TEST_ASSERT_EQUAL(audio::mic::inmp441_t::RECV_BUF_SIZE_ELEMENTS, buf.size());
-    TEST_ASSERT_EQUAL(audio::mic::inmp441_t::RECV_BUF_SIZE_BYTES, buf.size_bytes());
+    TEST_ASSERT_EQUAL(inmp441_t::RECV_BUF_SIZE_ELEMENTS, buf.size());
+    TEST_ASSERT_EQUAL(inmp441_t::RECV_BUF_SIZE_BYTES, buf.size_bytes());
 
     TEST_ESP_OK(mic.return_buffer(buf.data()));
 
@@ -185,10 +180,9 @@ TEST_CASE("Streaming produces correctly sized buffers", "[inmp441][i2s]") {
 }
 
 TEST_CASE("Double buffering alternates between the two buffers", "[inmp441][i2s]") {
-    audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config();
+    inmp441_t mic{};
 
-    TEST_ESP_OK(mic.init(cfg));
+    TEST_ESP_OK(mic.init(get_test_config()));
     TEST_ESP_OK(mic.start_stream());
 
     auto first = wait_for_filled_buffer(mic);
@@ -212,10 +206,9 @@ TEST_CASE("Double buffering alternates between the two buffers", "[inmp441][i2s]
 }
 
 TEST_CASE("Returning a buffer twice fails the second time", "[inmp441][i2s]") {
-    audio::mic::inmp441_t mic{};
-    const auto            cfg = get_test_config();
+    inmp441_t mic{};
 
-    TEST_ESP_OK(mic.init(cfg));
+    TEST_ESP_OK(mic.init(get_test_config()));
     TEST_ESP_OK(mic.start_stream());
 
     auto result = wait_for_filled_buffer(mic);
@@ -236,10 +229,9 @@ TEST_CASE("Right channel selection initializes without error", "[inmp441][i2s]")
     // This only proves the L/R gpio and slot_mask config path executes.
     // Confirming the mic is actually wired to the right channel of the bus
     // would require more setup, and is beyond the scope of this test.
-    audio::mic::inmp441_t mic{};
-    constexpr auto        cfg = get_test_config(/* use_right_chan = */ true);
+    inmp441_t mic{};
 
-    TEST_ESP_OK(mic.init(cfg));
+    TEST_ESP_OK(mic.init(get_test_config(/* use_right_chan = */ true)));
     TEST_ESP_OK(mic.start_stream());
 
     auto result = wait_for_filled_buffer(mic);

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
+#include "driver/spi_master.h"
 
 #include "esp_err.h"
 
@@ -116,14 +116,15 @@ namespace display {
         config_t            m_config{};
         spi_device_handle_t m_device_handle{};
 
-        constexpr static auto TIMEOUT_MS       = 50U;
-        constexpr static auto TRANS_QUEUE_SIZE = 5U;
+        constexpr static uint32_t TIMEOUT_MS       = 50;
+        constexpr static uint32_t TRANS_QUEUE_SIZE = 5;
 
-        constexpr static auto LED_LEDC_TIMER_RES     = LEDC_TIMER_8_BIT;
-        constexpr static auto LED_LEDC_TIMER_FREQ_HZ = 20'000U;
-        constexpr static auto LED_LEDC_RES_MAX_VAL   = 1 << std::to_underlying(LED_LEDC_TIMER_RES);
+        constexpr static ledc_timer_bit_t LED_LEDC_TIMER_RES = LEDC_TIMER_8_BIT;
 
-        constexpr static auto* TAG = "ILI9341";
+        constexpr static uint32_t LED_LEDC_TIMER_FREQ_HZ = 20'000;
+        constexpr static uint32_t LED_LEDC_RES_MAX_VAL   = 1 << std::to_underlying(LED_LEDC_TIMER_RES);
+
+        constexpr static const char* TAG = "ILI9341";
 
         // Helpers
         esp_err_t init_sequence();

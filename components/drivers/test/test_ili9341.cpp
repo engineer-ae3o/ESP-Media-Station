@@ -1,23 +1,22 @@
-#include "driver/spi_common.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #include "unity.h"
 
-#include "driver/spi_master.h"
 #include "esp_heap_caps.h"
+#include "driver/spi_common.h"
 
-#include "ili9341.hpp"
-#include "config.hpp"
 #include "utils.hpp"
+#include "config.hpp"
+#include "ili9341.hpp"
 
 #include <array>
 #include <cstdint>
 
 namespace {
 
-    consteval auto get_test_config() {
-        return display::config_t{
+    consteval display::config_t get_test_config() {
+        return {
             .spi_host           = config::ILI_SPI_BUS,
             .spi_clock_speed_hz = config::ILI_SPI_CLK_SPEED_HZ,
             .led_pin            = config::ILI_LED_PIN,
@@ -59,16 +58,15 @@ TEST_CASE("Initialization and deinitialization", "[ili9341][spi]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     display::ili9341_t display{};
-    constexpr auto     cfg = get_test_config();
 
     // Requires LEDC timer setup first
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, true));
 
     // Test valid init
-    TEST_ESP_OK(display.init(cfg));
+    TEST_ESP_OK(display.init(get_test_config()));
 
     // Test double init (Should fail with invalid state)
-    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, display.init(cfg));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, display.init(get_test_config()));
 
     // Test valid deinit
     TEST_ESP_OK(display.deinit());
@@ -77,17 +75,16 @@ TEST_CASE("Initialization and deinitialization", "[ili9341][spi]") {
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, display.deinit());
 
     // Cleanup timer
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, false));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, false));
 }
 
 TEST_CASE("Flush out of bounds", "[ili9341][spi]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     display::ili9341_t display{};
-    constexpr auto     cfg = get_test_config();
 
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
-    TEST_ESP_OK(display.init(cfg));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, true));
+    TEST_ESP_OK(display.init(get_test_config()));
     TEST_ESP_OK(display.set_brightness());
 
     std::array<uint16_t, 1024> dummy_data{};
@@ -112,17 +109,16 @@ TEST_CASE("Flush out of bounds", "[ili9341][spi]") {
     TEST_ESP_OK(display.set_brightness(0));
 
     TEST_ESP_OK(display.deinit());
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, false));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, false));
 }
 
 TEST_CASE("Flush Valid Data from PSRAM", "[ili9341][spi][psram]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     display::ili9341_t display{};
-    constexpr auto     cfg = get_test_config();
 
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
-    TEST_ESP_OK(display.init(cfg));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, true));
+    TEST_ESP_OK(display.init(get_test_config()));
     TEST_ESP_OK(display.set_brightness());
 
     // Allocate a full framebuffer buffer
@@ -145,17 +141,16 @@ TEST_CASE("Flush Valid Data from PSRAM", "[ili9341][spi][psram]") {
     TEST_ESP_OK(display.set_brightness(0));
 
     TEST_ESP_OK(display.deinit());
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, false));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, false));
 }
 
 TEST_CASE("Screen Fill", "[ili9341][fill_screen]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     display::ili9341_t display{};
-    constexpr auto     cfg = get_test_config();
 
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
-    TEST_ESP_OK(display.init(cfg));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, true));
+    TEST_ESP_OK(display.init(get_test_config()));
     TEST_ESP_OK(display.set_brightness());
 
     // Set screen to Green (little-endian conversion handled internally by set_screen)
@@ -165,17 +160,16 @@ TEST_CASE("Screen Fill", "[ili9341][fill_screen]") {
     TEST_ESP_OK(display.set_brightness(0));
 
     TEST_ESP_OK(display.deinit());
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, false));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, false));
 }
 
 TEST_CASE("Backlight Brightness Control", "[ili9341][ledc]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     display::ili9341_t display{};
-    constexpr auto     cfg = get_test_config();
 
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, true));
-    TEST_ESP_OK(display.init(cfg));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, true));
+    TEST_ESP_OK(display.init(get_test_config()));
 
     // Arbitrary color
     TEST_ESP_OK(display.set_screen(0x2AD4, true));
@@ -192,5 +186,5 @@ TEST_CASE("Backlight Brightness Control", "[ili9341][ledc]") {
     TEST_ESP_OK(display.deinit());
     TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, display.set_brightness(128));
 
-    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(cfg.led_ledc_timer, false));
+    TEST_ESP_OK(display::ili9341_t::init_ledc_timer(get_test_config().led_ledc_timer, false));
 }

@@ -4,8 +4,6 @@
 
 #include "unity.h"
 
-#include "driver/spi_master.h"
-
 #include "utils.hpp"
 #include "config.hpp"
 #include "xpt2046.hpp"
@@ -25,8 +23,8 @@ namespace {
     // the test outright instead of hanging the test runner forever.
     constexpr uint32_t TOUCH_TIMEOUT_MS = 15'000;
 
-    consteval auto get_test_config() {
-        return touch::config_t{
+    consteval touch::config_t get_test_config() {
+        return {
             .spi_host           = config::XPT_SPI_BUS,
             .clock_freq_hz      = config::XPT_SPI_CLK_SPEED_HZ,
             .queue_length       = 5,
@@ -84,17 +82,16 @@ TEST_CASE("Initialization and deinitialization", "[xpt2046][spi]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     touch::xpt2046_t<> xpt{};
-    constexpr auto     cfg = get_test_config();
 
     // Queue handle should be null before init
     TEST_ASSERT_NULL(xpt.get_event_queue());
 
     // Test valid init
-    TEST_ESP_OK(xpt.init(cfg));
+    TEST_ESP_OK(xpt.init(get_test_config()));
     TEST_ASSERT_NOT_NULL(xpt.get_event_queue());
 
     // Test double init (should fail with invalid state)
-    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, xpt.init(cfg));
+    TEST_ASSERT_EQUAL(ESP_ERR_INVALID_STATE, xpt.init(get_test_config()));
 
     // Test valid deinit
     TEST_ESP_OK(xpt.deinit());
@@ -108,9 +105,8 @@ TEST_CASE("No spurious touch events when idle", "[xpt2046][spi][manual]") {
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     touch::xpt2046_t<> xpt{};
-    constexpr auto     cfg = get_test_config();
 
-    TEST_ESP_OK(xpt.init(cfg));
+    TEST_ESP_OK(xpt.init(get_test_config()));
 
     ESP_LOGI("TOUCH_TEST", "Do NOT touch the screen for the next 5 seconds");
 
@@ -125,9 +121,8 @@ TEST_CASE("Multiple sequential presses are all captured", "[xpt2046][spi][manual
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     touch::xpt2046_t<> xpt{};
-    constexpr auto     cfg = get_test_config();
 
-    TEST_ESP_OK(xpt.init(cfg));
+    TEST_ESP_OK(xpt.init(get_test_config()));
     auto* event_queue = xpt.get_event_queue();
     TEST_ASSERT_NOT_NULL(event_queue);
     xQueueReset(event_queue);
@@ -143,8 +138,8 @@ TEST_CASE("Multiple sequential presses are all captured", "[xpt2046][spi][manual
         (void)std::format_to(msg.data(), "Timed out waiting for press {} of {}", i + 1, press_count);
         TEST_ASSERT_EQUAL_MESSAGE(pdTRUE, received, msg.data());
 
-        TEST_ASSERT_TRUE(coord.x < cfg.screen_pixel_len_x);
-        TEST_ASSERT_TRUE(coord.y < cfg.screen_pixel_len_y);
+        TEST_ASSERT_TRUE(coord.x < get_test_config().screen_pixel_len_x);
+        TEST_ASSERT_TRUE(coord.y < get_test_config().screen_pixel_len_y);
     }
 
     TEST_ESP_OK(xpt.deinit());
@@ -154,9 +149,8 @@ TEST_CASE("Touch detection maps to expected screen coordinates", "[xpt2046][spi]
     [[maybe_unused]] spi_test_fixture_t spi_bus{};
 
     touch::xpt2046_t<> xpt{};
-    constexpr auto     cfg = get_test_config();
 
-    TEST_ESP_OK(xpt.init(cfg));
+    TEST_ESP_OK(xpt.init(get_test_config()));
     auto* event_queue = xpt.get_event_queue();
     TEST_ASSERT_NOT_NULL(event_queue);
 
@@ -167,10 +161,10 @@ TEST_CASE("Touch detection maps to expected screen coordinates", "[xpt2046][spi]
 
     constexpr std::array<target_t, 5> targets = {{
         {0, 0, "top left corner"},
-        {cfg.screen_pixel_len_x - 1, 0, "top right corner"},
-        {0, cfg.screen_pixel_len_y - 1, "bottom left corner"},
-        {cfg.screen_pixel_len_x - 1, cfg.screen_pixel_len_y - 1, "bottom right corner"},
-        {cfg.screen_pixel_len_x / 2, cfg.screen_pixel_len_y / 2, "center"},
+        {get_test_config().screen_pixel_len_x - 1, 0, "top right corner"},
+        {0, get_test_config().screen_pixel_len_y - 1, "bottom left corner"},
+        {get_test_config().screen_pixel_len_x - 1, get_test_config().screen_pixel_len_y - 1, "bottom right corner"},
+        {get_test_config().screen_pixel_len_x / 2, get_test_config().screen_pixel_len_y / 2, "center"},
     }};
 
     for (const auto& target : targets) {

@@ -23,7 +23,7 @@ namespace {
 
 } // namespace
 
-// NOTE: The y axis (in my physical configuration, at least) is swapped.
+// NOTE: The y axis (in the physical configuration of my controller, at least) is swapped.
 // So the coordinates for the y axis will be flipped relative to the x axis
 
 TEST_CASE("All identical samples produce that exact value", "[touch_math]") {
