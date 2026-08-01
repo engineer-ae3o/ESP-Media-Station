@@ -123,11 +123,12 @@ TEST_CASE("Flush Valid Data from PSRAM", "[ili9341][spi][psram]") {
 
     // Allocate a full framebuffer buffer
     constexpr size_t pixel_count = display::ili9341_t::MAX_HEIGHT * display::ili9341_t::MAX_WIDTH;
-    auto*            buf = static_cast<uint16_t*>(heap_caps_malloc(pixel_count * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
+
+    auto* buf = static_cast<uint16_t*>(heap_caps_malloc(pixel_count * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA));
     TEST_ASSERT_NOT_NULL(buf);
 
     // Fill with red (RGB565)
-    constexpr auto color = __builtin_bswap16(0xF800);
+    constexpr uint16_t color = __builtin_bswap16(0xF800);
     for (size_t i = 0; i < pixel_count; i++) {
         buf[i] = color;
     }

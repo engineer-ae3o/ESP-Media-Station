@@ -45,9 +45,10 @@ namespace {
     }
 
     using stereo_amp_t  = max98357a_t<gain_t::dB_12, amp::mode_t::STEREO, true>;
-    using left_amp_t    = max98357a_t<gain_t::dB_12, amp::mode_t::LEFT_CHANNEL, true>;
-    using right_amp_t   = max98357a_t<gain_t::dB_12, amp::mode_t::RIGHT_CHANNEL, true>;
     using no_gain_pin_t = max98357a_t<gain_t::dB_9, amp::mode_t::STEREO, false>;
+
+    using left_amp_t  = max98357a_t<gain_t::dB_12, amp::mode_t::LEFT_CHANNEL, true>;
+    using right_amp_t = max98357a_t<gain_t::dB_12, amp::mode_t::RIGHT_CHANNEL, true>;
 
 } // namespace
 

@@ -37,8 +37,8 @@ namespace display {
 
     class ili9341_t {
     public:
-        constexpr static auto MAX_WIDTH  = 240U;
-        constexpr static auto MAX_HEIGHT = 320U;
+        constexpr static uint32_t MAX_WIDTH  = 240;
+        constexpr static uint32_t MAX_HEIGHT = 320;
 
         ili9341_t() = default;
         ~ili9341_t() noexcept;

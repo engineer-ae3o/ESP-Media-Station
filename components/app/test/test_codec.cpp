@@ -31,6 +31,7 @@ namespace {
     constexpr const char* TEST_FILE_PATH = "/lfs/codec/opus_test_stream.bin";
 
     consteval config_t get_encoder_config() {
+        static_assert(FRAME_DURATION_MS == 20);
         return config_t{
             .bit_rate          = 40'000,
             .complexity        = 4,
@@ -42,6 +43,7 @@ namespace {
     }
 
     consteval config_t get_decoder_config() {
+        static_assert(FRAME_DURATION_MS == 20);
         return config_t{
             .bit_rate          = 40'000,
             .complexity        = 4,
@@ -52,17 +54,15 @@ namespace {
         };
     }
 
-    // Deliberately hands the encoder a decoder-shaped duration_type (and vice
-    // versa) to exercise the std::get_if(...) rejection path in start(...).
     consteval config_t get_mismatched_encoder_config() {
         config_t cfg      = get_encoder_config();
-        cfg.duration_type = ESP_OPUS_DEC_FRAME_DURATION_20_MS;
+        cfg.duration_type = ESP_OPUS_DEC_FRAME_DURATION_20_MS; // Use the wrong type for duration_type here
         return cfg;
     }
 
     consteval config_t get_mismatched_decoder_config() {
         config_t cfg      = get_decoder_config();
-        cfg.duration_type = ESP_OPUS_ENC_FRAME_DURATION_20_MS;
+        cfg.duration_type = ESP_OPUS_ENC_FRAME_DURATION_20_MS; // Use the wrong type for duration_type here
         return cfg;
     }
 
@@ -87,7 +87,7 @@ namespace {
      *        for it, generates a 440Hz sine wave in the buffer, and transfers ownership
      *        of the buffer to the caller. 
      * 
-     * @param sample_count Number of 16 bit PCM samples to geberate.
+     * @param sample_count Number of 16 bit PCM samples to generate.
      * 
      * @return The buffer holding the PCM.
      */
@@ -115,27 +115,56 @@ namespace {
         uint32_t opus_capacity{};
         uint32_t opus_used{};
         uint32_t frame_count{};
+
+        encoded_stream_t()  = default;
+        ~encoded_stream_t() = default;
+
+        encoded_stream_t(const encoded_stream_t&)            = delete;
+        encoded_stream_t& operator=(const encoded_stream_t&) = delete;
+
+        encoded_stream_t(encoded_stream_t&& other) noexcept {
+            pcm           = std::move(other.pcm);
+            opus          = std::move(other.opus);
+            opus_used     = std::exchange(other.opus_used, 0);
+            frame_count   = std::exchange(other.frame_count, 0);
+            opus_capacity = std::exchange(other.opus_capacity, 0);
+        }
+
+        encoded_stream_t& operator=(encoded_stream_t&& other) noexcept {
+            if (this != &other) {
+                pcm           = std::move(other.pcm);
+                opus          = std::move(other.opus);
+                opus_used     = std::exchange(other.opus_used, 0);
+                frame_count   = std::exchange(other.frame_count, 0);
+                opus_capacity = std::exchange(other.opus_capacity, 0);
+            }
+            return *this;
+        }
     };
 
+    /**
+     * @brief 
+     * 
+     * @return The built encoded opus stream. 
+     */
     encoded_stream_t build_encoded_stream() {
         auto encoder = stream_t<opus::mode_t::ENCODER>::create(get_encoder_config());
-        TEST_ASSERT_TRUE_MESSAGE(encoder.has_value(), "Failed to create encoder while building test fixture stream");
+        TEST_ASSERT_TRUE_MESSAGE(encoder.has_value(), "Failed to create encoder instance while building test fixture stream");
 
-        // Get size of buffer we have to allocate to store the PCM data as well the number of PCM samples
-        constexpr uint32_t total_samples_count = SAMPLE_RATE_HZ * SECONDS_TO_TEST;
-        constexpr uint32_t pcm_buf_size_bytes  = total_samples_count * sizeof(int16_t); // 16 bit PCM
+        // Get the size of buffer we have to allocate to store the PCM data as well find the number of PCM samples
+        constexpr uint32_t sample_count       = SAMPLE_RATE_HZ * SECONDS_TO_TEST;
+        constexpr uint32_t pcm_buf_size_bytes = sample_count * sizeof(int16_t); // 16 bit PCM
 
         // Manually calculate the PCM frame size
-        constexpr uint32_t SAMPLES_PER_FRAME     = get_encoder_config().sample_rate * get_encoder_config().frame_duration_ms / 1'000;
+        constexpr uint32_t SAMPLES_PER_FRAME     = (get_encoder_config().sample_rate * get_encoder_config().frame_duration_ms) / 1'000;
         constexpr uint32_t PCM_FRAME_SIZE_ACTUAL = SAMPLES_PER_FRAME * (ESP_AUDIO_BIT16 / 8) * 1; // 1 channel
 
-        // Check that the manually calculated PCM input frame size matches the one from
+        // Check that the manually calculated PCM input frame size matches the one from stream_t<>::get_input_frame_size()
         TEST_ASSERT_EQUAL(PCM_FRAME_SIZE_ACTUAL, encoder->get_input_frame_size());
 
+        // Create the stream
         encoded_stream_t result{};
-
-        //
-        result.pcm           = make_sine_pcm(total_samples_count);
+        result.pcm           = make_sine_pcm(sample_count);
         result.opus_capacity = pcm_buf_size_bytes + (1024 * 1024 * sizeof(frame_header_t)); // Generous headroom
 
         result.opus.reset((new (std::nothrow) uint8_t[result.opus_capacity]));
@@ -296,8 +325,9 @@ TEST_CASE("Encoder reports partial success when the output buffer is too small t
     auto           pcm         = make_sine_pcm(pcm_bytes / sizeof(int16_t));
 
     // Deliberately too small: room for the stream header plus only a couple of frames.
-    const uint32_t small_out_sz = sizeof(stream_header_t) + (sizeof(frame_header_t) * 2) + 64;
-    auto*          small_out    = static_cast<uint8_t*>(heap_caps_malloc(small_out_sz, MALLOC_CAP_8BIT));
+    constexpr uint32_t small_out_sz = sizeof(stream_header_t) + (sizeof(frame_header_t) * 2) + 64;
+
+    auto* small_out = static_cast<uint8_t*>(heap_caps_malloc(small_out_sz, MALLOC_CAP_8BIT));
     TEST_ASSERT_NOT_NULL(small_out);
 
     auto result = encoder->encode({reinterpret_cast<uint8_t*>(pcm.get()), pcm_bytes}, {small_out, small_out_sz});

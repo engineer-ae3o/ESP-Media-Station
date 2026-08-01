@@ -27,7 +27,7 @@ namespace audio::mic {
 
     class inmp441_t {
     public:
-        constexpr static auto* TAG = "INMP441";
+        constexpr static const char* TAG = "INMP441";
 
         // Sampling rate of the I2S channel
         constexpr static size_t SAMPLE_RATE_HZ = 48'000;
